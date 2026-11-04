@@ -1,0 +1,7 @@
+# Copyrighted game data never goes in the repo.
+*.nes
+*.zip
+rom/
+build/
+vendor/
+__pycache__/
