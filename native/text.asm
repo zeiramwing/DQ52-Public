@@ -120,8 +120,7 @@ DialogEdge:
 ;Start the next message of MsgList, or, past the last, wait for a button
 ;to close the window. (The people's lists are in MSG_BANK.)
 NextMessage:
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDY #$00                ;
         LDA (MsgList),Y         ;
         STA MsgLo               ;
@@ -174,8 +173,8 @@ MsgOwnLine:
 MsgLineDone:
         LDA #$00                ;
         STA DlgState            ;
-        LDA #MSG_BANK           ;Find it: where it starts (MSG_BANK's
-        JSR SelectBank          ;table, 2 bytes a message).
+        JSR SelectMsg           ;Find it: where it starts (MSG_BANK's
+                                ;table, 2 bytes a message).
         LDA MsgLo               ;
         ASL                     ;
         STA TextPtr             ;
@@ -398,8 +397,7 @@ NotItem:
 NameOf:
         TXA                     ;
         TAY                     ;(SelectBank loses X.)
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDA NAME_LO,Y           ;
         STA NamePtr             ;
         LDA NAME_HI,Y           ;
@@ -608,23 +606,8 @@ ScrollLine:
 ;$FFFE in MsgList: open the YES/NO window, the cursor on YES; the yes and no
 ;lists follow.
 AskYesNo:
-        LDA #YN_ROW             ;
-        STA WinRow              ;
-        LDY #$00                ;
-YesNoRow:
-        LDA #YN_COL             ;
-        STA WinCol              ;
-*       LDA YesNoTemplate,Y     ;
-        STY Tmp3                ;
-        JSR PutTileA            ;
-        LDY Tmp3                ;
-        INY                     ;
-        LDA WinCol              ;
-        CMP #YN_COL+6           ;
-        BNE -                   ;
-        INC WinRow              ;
-        CPY #6*5                ;
-        BNE YesNoRow            ;
+        LDX #TPL_YESNO          ;
+        JSR DrawTemplate        ;
         LDA #$00                ;
         STA Answer              ;
         LDA #$01                ;
@@ -687,8 +670,7 @@ YesNoDone:
         STA DlgState            ;
         RTS                     ;
 *
-        LDA #MSG_BANK           ;(The lists' bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(The lists' bank.)
         LDA Answer              ;Then the yes list or the no list.
         ASL                     ;
         CLC                     ;

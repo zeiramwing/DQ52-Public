@@ -224,7 +224,9 @@ def people(rom, town):
                 break
             a, b, c = data[i:i + 3]
             if c not in HIDDEN:
-                out.append((a >> 5, a & 0x1F, b & 0x1F, b >> 5 & 3, c, mobile))
+                # Everyone faces down (2), always: the port draws most
+                # townspeople into the town's background, one look each.
+                out.append((a >> 5, a & 0x1F, b & 0x1F, 2, c, mobile))
     return out
 
 

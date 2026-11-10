@@ -17,8 +17,7 @@
 
 ;STATUS (Cursor 2 of the command window): the window drawn.
 StatusCommand:
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDA #<STATUS_WIN        ;
         STA SrcPtr              ;
         LDA #>STATUS_WIN        ;
@@ -47,8 +46,7 @@ StWinRow:
         LDA #$00                ;
         STA StField             ;
 StNextField:
-        LDA #MSG_BANK           ;The next field's place and kind.
-        JSR SelectBank          ;
+        JSR SelectMsg           ;The next field's place and kind.
         LDX StField             ;
         LDA STATUS_FIELDS,X     ;
         CMP #$FF                ;
@@ -56,8 +54,7 @@ StNextField:
         LDA #$05                ;All drawn: wait for a button, the hero out
         STA Mode                ;of sight (under it).
         LDA #$00                ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         RTS                     ;
 *       CLC                     ;
         ADC #STATUS_TOP         ;
@@ -191,8 +188,7 @@ StatusFrame:
 *       LDA #$00                ;
         STA Mode                ;
         LDA #HERO_HPOS          ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         LDA #STATUS_HEIGHT/2    ;
         STA Rows                ;
         LDX #STATUS_LEFT/2      ;

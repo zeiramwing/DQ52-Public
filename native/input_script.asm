@@ -8,8 +8,7 @@
 ReadInput:
         LDA CurBank             ;(The bank in, kept.)
         PHA                     ;
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDA ScriptPtr+1         ;The first: the script's start.
         BNE +                   ;
         LDA #<SCRIPT_AT         ;

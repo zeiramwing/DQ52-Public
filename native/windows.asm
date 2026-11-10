@@ -74,24 +74,14 @@ CellAt:
 
 ;Put text tile A in set A at (WinRow, WinCol), and step to the next column.
 PutTileA:
-        TAX                     ;Set A's own (blanks: 0), else TileA's.
-        LDA TextA,X             ;
-        BNE +                   ;
-        CPX #TL_BLANK           ;
-        BEQ +                   ;
-        TXA                     ;
-        JSR TileA               ;
-*       JSR PutChar             ;
+        TAX                     ;Its code in set A (TextA: lower case the
+        LDA TextA,X             ;capitals'; blanks and tiles set A lacks 0).
+        JSR PutChar             ;
         INC WinCol              ;
         RTS                     ;
 
-;Copy the glyphs of the name's first 4 letters (from set B, which has
-;every text tile) into set A's name slots.
-NameGlyphs:
-        LDY #$00                ;
-NameGlyph:
-        LDX HeroName,Y          ;
-        LDA TextB,X             ;Its set B character * 8.
+;Ptr = set A's glyph for code A (CharsetA + A * 8; X and Y kept).
+CharPtr:
         STA Ptr                 ;
         LDA #$00                ;
         ASL Ptr                 ;
@@ -100,9 +90,72 @@ NameGlyph:
         ROL                     ;
         ASL Ptr                 ;
         ROL                     ;
-        CLC                     ;
-        ADC #>CharsetB          ;
+        ADC #>CharsetA          ;(C clear: A below 8.)
         STA Ptr+1               ;
+        RTS                     ;
+
+;Draw window template X (TPL_: its tiles, row by row, at its place).
+.alias TPL_STATUS       0       ;
+.alias TPL_COMMAND      6       ;
+.alias TPL_BATTLE       12      ;
+.alias TPL_YESNO        18      ;
+.alias TplPtr           $6C     ;2: the template.
+.alias TplX             $02E0   ;Which,
+.alias TplN             $02E1   ;and the cells left in the row.
+DrawTemplate:
+        STX TplX                ;
+        LDA Templates,X         ;
+        STA TplPtr              ;
+        LDA Templates+1,X       ;
+        STA TplPtr+1            ;
+        LDA Templates+2,X       ;
+        STA WinRow              ;
+        LDY #$00                ;
+TemplateRow:
+        LDX TplX                ;
+        LDA Templates+3,X       ;
+        STA WinCol              ;
+        LDA Templates+4,X       ;
+        STA TplN                ;
+TemplateCell:
+        LDA (TplPtr),Y          ;
+        STY Tmp3                ;
+        JSR PutTileA            ;
+        LDY Tmp3                ;
+        INY                     ;
+        DEC TplN                ;
+        BNE TemplateCell        ;
+        INC WinRow              ;
+        LDX TplX                ;
+        TYA                     ;
+        CMP Templates+5,X       ;
+        BNE TemplateRow         ;
+        RTS                     ;
+;Each: its tiles, row, column, width, and size.
+Templates:
+        .word StatusTemplate
+        .byte STATUS_ROW, STATUS_COL, 8, 8*12
+        .word CommandTemplate
+        .byte CMD_ROW, CMD_COL, CMD_WIDTH, CMD_WIDTH*CMD_HEIGHT
+        .word BattleCmdTemplate
+        .byte CMD_ROW, CMD_COL, CMD_WIDTH, CMD_WIDTH*6
+        .word YesNoTemplate
+        .byte YN_ROW, YN_COL, 6, 6*5
+
+;Copy the glyphs of the name's first 4 letters into set A's name slots,
+;from set A's own (capitals: set B's are mode 2's, the dialog's).
+NameGlyphs:
+        LDY #$00                ;
+NameGlyph:
+        LDX HeroName,Y          ;
+        LDA TextA,X             ;Its set A character * 8 (lower case: the
+        CMP #TEXT_END           ;capital's). The name window's punctuation
+        BCC +                   ;past TEXT_END: blank in a wide town, whose
+        LDX MapFreeCode         ;characters have those codes.
+        CPX #TEXT_END+1         ;
+        BCC +                   ;
+        LDA #$00                ;
+*       JSR CharPtr             ;
         TYA                     ;Slot NAME_SLOT + Y in set A, * 8.
         CLC                     ;
         ADC #NAME_SLOT          ;
@@ -189,23 +242,8 @@ ShowStatus:
         RTS                     ;
 *       LDA #$01                ;
         STA StatusOn            ;
-        LDA #STATUS_ROW         ;The template, row by row.
-        STA WinRow              ;
-        LDY #$00                ;
-StatusRow:
-        LDA #STATUS_COL         ;
-        STA WinCol              ;
-*       LDA StatusTemplate,Y    ;
-        STY Tmp3                ;
-        JSR PutTileA            ;
-        LDY Tmp3                ;
-        INY                     ;
-        LDA WinCol              ;
-        CMP #STATUS_COL+8       ;
-        BNE -                   ;
-        INC WinRow              ;
-        CPY #8*12               ;
-        BNE StatusRow           ;
+        LDX #TPL_STATUS         ;The template, row by row.
+        JSR DrawTemplate        ;
 
         LDA #STATUS_ROW         ;The name's first 4 letters in the top
         STA WinRow              ;border (set A's name slots; a blank shows
@@ -285,23 +323,8 @@ OpenCommand:
         LDA #SFX_MENU           ;
         JSR PlaySFX             ;
         JSR ShowStatus          ;
-        LDA #CMD_ROW            ;
-        STA WinRow              ;
-        LDY #$00                ;
-CmdRow:
-        LDA #CMD_COL            ;
-        STA WinCol              ;
-*       LDA CommandTemplate,Y   ;
-        STY Tmp3                ;
-        JSR PutTileA            ;
-        LDY Tmp3                ;
-        INY                     ;
-        LDA WinCol              ;
-        CMP #CMD_COL+CMD_WIDTH  ;
-        BNE -                   ;
-        INC WinRow              ;
-        CPY #CMD_WIDTH*CMD_HEIGHT ;
-        BNE CmdRow              ;
+        LDX #TPL_COMMAND        ;
+        JSR DrawTemplate        ;
         LDA #$00                ;
         STA Cursor              ;
         LDA #TL_ARROW           ;
@@ -484,14 +507,9 @@ TalkTo:
         BCC TalkNone            ;
 TalkFound:
         STX ShopTmpI            ;(Who: KingGwaelin's.)
-        LDA Facing              ;
-        EOR #$02                ;The opposite way.
-        STA PersonFace,X        ;
-        LDA #$01                ;
-        STA PeopleDirty         ;
         LDY PersonCtl,X         ;Its dialog's list (MSG_BANK's tables).
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;(X lost.)
+        JSR SelectMsg           ;
+                                ;(X lost.)
         LDA DIALOG_LO,Y         ;
         STA MsgList             ;
         LDA DIALOG_HI,Y         ;

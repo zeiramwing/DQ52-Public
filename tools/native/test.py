@@ -92,7 +92,8 @@ def tables(out):
     found = {}
     for k, label in enumerate(("TextA", "TextB")):
         values = data[k * 256:(k + 1) * 256]
-        found[label] = {code: tile for tile, code in reversed(list(enumerate(values))) if code}
+        order = list(enumerate(values))         # (Set A: a capital, not its lower case.)
+        found[label] = {code: tile for tile, code in (order if label == "TextA" else reversed(order)) if code}
     return found
 
 
@@ -101,6 +102,7 @@ def screen_text(out, mem, labels):
     names = tables(out)
     name_slot = int(re.search(r"NAME_SLOT\s+(\d+)", open(os.path.join(out, "data.asm")).read()).group(1))
     hero = [mem[0x0240 + i] for i in range(4)]
+    text_a = names["TextA"]
     lines = []
     for r in range(ROWS):
         row = (zp("TopBlock") * 2 + r) & 31
@@ -114,7 +116,7 @@ def screen_text(out, mem, labels):
             elif name_slot <= code < name_slot + 4:
                 line += tile_text(hero[code - name_slot])
             else:
-                line += tile_text(names["TextA"][code]) if code in names["TextA"] else "."
+                line += tile_text(text_a[code]) if code in text_a else "."
         lines.append(line)
     return lines
 

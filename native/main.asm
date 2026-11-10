@@ -67,7 +67,7 @@
 .alias OutsideMap       $077C   ;where OUTSIDE takes the hero,
 .alias OutsideX         $077D   ;
 .alias OutsideY         $077E   ;
-.alias MapFreeCode      $077F   ;its first free character code.
+.alias MapFreeCode      $077F   ;its first free character code (past TEXT_END: a wide town),
 .alias RowSub           $07AB   ;2: WorldRow's Y * 8.
 .alias Key              $07C1   ;The keypad key held (0: none),
 .alias LastKey          $07C2   ;last frame's,
@@ -122,7 +122,8 @@
 .alias MONSTER_DARK_BANK 13     ;The monsters on black (the caves' battles).
 
 .alias DL_ROWS          29      ;Display list rows: 28 shown, one more for VSCROL.
-.alias DLG_FIRST        18      ;The dialog window's first row.
+.alias DLG_FIRST        18      ;The dialog window's first row,
+.alias DLG_INK          $0E     ;its text's brightness (mode 2: COLPF1).
 .alias HERO_LINE        128     ;The hero's top line in player memory,
 .alias HERO_HPOS        128     ;and its horizontal position: block 8 of the view.
 .alias FIRST_LINE       16      ;The first scan line shown.
@@ -277,8 +278,7 @@ Start:
         STA Random+1            ;
 
         LDA #HERO_HPOS          ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         LDA #$00                ;
         STA IRQEN               ;
         STA POTGO               ;
@@ -316,6 +316,7 @@ BootCopy:
         LDX #$04                ;
         BNE BootCopy            ;
 BootCopied:
+        JSR LoadSetB            ;
         LDA #$FF                ;
         STA Shown               ;
         LDA #START_FACING       ;Facing down (or up, before the King).
@@ -425,9 +426,7 @@ Walk:
 *       LDA Paused              ;
         BEQ +                   ;
         JMP Frame               ;
-*       `prof_begin 1
-        JSR MovePeople          ;
-        `prof_end 1
+*
         LDA Moving              ;Standing: a new step starts, and moves, in
         BNE Step                ;this frame, so steps follow each other
         LDX KeyNew              ;without a pause. Keys 1-8 do a command at
@@ -450,6 +449,7 @@ Walk:
         `prof_begin 5
         JSR StartStep           ;
         `prof_end 5
+        INC AnimHold            ;(A long frame: the people's step waits one.)
         LDA Moving              ;
         BEQ Frame               ;
 Step:
@@ -500,6 +500,7 @@ Frame:
         `prof_begin 3
         JSR DrawPeople          ;
         `prof_end 3
+        JSR AnimStep            ;
         `prof_end 0
         JMP MainLoop            ;
 
@@ -536,8 +537,8 @@ LoadMap:
         JSR LoadMapRec          ;
         JSR SetBridge           ;
         JSR SetLordGfx          ;
+        JSR LoadAnim            ;
         JSR PlayMapMusic        ;
-        JSR ResetTiles          ;
         LDA #$01                ;
         STA Loading             ;
         LDA #$00                ;
@@ -566,21 +567,12 @@ LoadMap:
         STA LightR              ;
         LDA #$01                ;
         STA LightW              ;
-        LDA #$00                ;
-        STA MapPtr              ;
-        STA Ptr                 ;
-        LDA #>MapImage          ;
-        STA Ptr+1               ;
-        LDX #IMAGE_PAGES        ;
-        LDY #$00                ;
-*       LDA (MapPtr),Y          ;
-        STA (Ptr),Y             ;
-        INY                     ;
-        BNE -                   ;
-        INC MapPtr+1            ;
-        INC Ptr+1               ;
-        DEX                     ;
-        BNE -                   ;
+        LDA #>MapImage          ;Its image: set A's 4 pages, then its page
+        LDX #$04                ;of tables (set B, between them in RAM, is
+        JSR CopyPages           ;every map's: LoadSetB).
+        LDA #>BlockUL           ;
+        LDX #$01                ;
+        JSR CopyPages           ;
         JSR NameGlyphs          ;
         LDA HeroX               ;
         SEC                     ;
@@ -602,6 +594,34 @@ LoadMap:
         LDA FrameCount          ;The frames loading took are not missed.
         STA LastFrame           ;
         RTS                     ;
+
+;Copy X pages from MapPtr's page on to page A on (both moved on past them).
+CopyPages:
+        STA Ptr+1               ;
+        LDY #$00                ;
+        STY MapPtr              ;
+        STY Ptr                 ;
+CopyPage:
+        LDA (MapPtr),Y          ;
+        STA (Ptr),Y             ;
+        INY                     ;
+        BNE CopyPage            ;
+        INC MapPtr+1            ;
+        INC Ptr+1               ;
+        DEX                     ;
+        BNE CopyPage            ;
+        RTS                     ;
+
+;Set B, the dialog window's text (every text tile at 8 pixels, mode 2's),
+;to RAM: at power on, and after the title, which has its own there.
+LoadSetB:
+        LDA #GFX_BANK           ;
+        JSR SelectBank          ;
+        LDA #>GFX_SETB          ;
+        STA MapPtr+1            ;
+        LDA #>CharsetB          ;
+        LDX #$04                ;
+        BNE CopyPages           ;
 
 ;At a step's end: on the overworld, onto a town's door block, into it; in
 ;a town, off its edges, out to its door on the overworld.
@@ -650,8 +670,7 @@ LoadMapRec:
         LDA SrcPtr+1            ;
         ADC #>MAP_RECS          ;
         STA SrcPtr+1            ;
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDY #15                 ;
 *       LDA (SrcPtr),Y          ;
         STA MapRec,Y            ;
@@ -662,8 +681,7 @@ LoadMapRec:
 ;The links' bank in (MSG_BANK; X lost). Found, GoLinkTo or GoLinkFrom
 ;reads them so; not found, the map's bank back (LinksOut).
 LinksIn:
-        LDA #MSG_BANK           ;
-        JMP SelectBank          ;
+        JMP SelectMsg           ;
 LinksOut:
         JSR MapBankIn           ;
         CLC                     ;
@@ -847,7 +865,9 @@ DirY:   .byte $FF, $00, $01, $00
 ;--------------------------------------[Hero]--------------------------------------------------------
 
 ;Show the hero's frame: its facing and, as the game does, a step of its
-;walk every 16 frames.
+;walk every 16 frames; carrying the princess, his frames with her (8 on).
+;A frame is players 0-2's 16 lines each (64 bytes a frame, GFX_HERO in
+;GFX_BANK: convert.py's hero_frames; the bank in is put back).
 ShowHero:
         LDA Facing              ;
         ASL                     ;
@@ -856,26 +876,54 @@ ShowHero:
         AND #$10                ;
         BEQ +                   ;
         INC Tmp                 ;
-*       LDA Tmp                 ;
+*       LDA ModFlags            ;(Carrying her: frames 8-15.)
+        AND #F_CARRY            ;
+        ASL                     ;
+        ASL                     ;
+        ORA Tmp                 ;
         CMP Shown               ;
         BEQ ShowDone            ;
         STA Shown               ;
-        ASL                     ;Frame * 32: 16 bytes for each player.
-        ASL                     ;
-        ASL                     ;
-        ASL                     ;
-        ASL                     ;
-        TAX                     ;
-        LDY #$00                ;
-*       LDA HeroGfx,X           ;
-        STA Player0+HERO_LINE,Y ;
-        LDA HeroGfx+16,X        ;
-        STA Player1+HERO_LINE,Y ;
-        INX                     ;
-        INY                     ;
-        CPY #16                 ;
-        BNE -                   ;
+        LSR                     ;GFX_HERO + frame * 64.
+        LSR                     ;
+        CLC                     ;
+        ADC #>GFX_HERO          ;
+        STA Ptr+1               ;
+        LDA Shown               ;
+        ROR                     ;
+        ROR                     ;
+        ROR                     ;
+        AND #$C0                ;
+        STA Ptr                 ;
+        LDA CurBank             ;
+        PHA                     ;
+        LDA #GFX_BANK           ;
+        JSR SelectBank          ;
+        LDY #47                 ;
+ShowLine:
+        LDA (Ptr),Y             ;
+        CPY #32                 ;
+        BCC +                   ;
+        STA Player2+HERO_LINE-32,Y ;
+        BCS ShowNext            ;
+*       CPY #16                 ;
+        BCC +                   ;
+        STA Player1+HERO_LINE-16,Y ;
+        BCS ShowNext            ;
+*       STA Player0+HERO_LINE,Y ;
+ShowNext:
+        DEY                     ;
+        BPL ShowLine            ;
+        PLA                     ;
+        JMP SelectBank          ;
 ShowDone:
+        RTS                     ;
+
+;The hero's players at A (0: out of sight).
+HeroAt:
+        STA HPOSP0              ;
+        STA HPOSP1              ;
+        STA HPOSP2              ;
         RTS                     ;
 
 ;--------------------------------------[Controller]--------------------------------------------------
@@ -895,6 +943,8 @@ Parked:
 ;Put SuperCart bank A in place (the first half, this program, is the same
 ;in every bank): reading $BFC0 + (bank AND $0C) sets its upper 2 bits,
 ;$BFD0 + (bank AND 3) * 4 its lower 2.
+SelectMsg:
+        LDA #MSG_BANK           ;(The messages' bank: asked for most.)
 SelectBank:
         CMP CurBank             ;
         BEQ +                   ;
@@ -1403,6 +1453,33 @@ DListRow:
         STA DList+2,X           ;
         JMP SetAddresses        ;
 
+;The dialog window's rows (DLG_FIRST on) in ANTIC mode 2 while it is up,
+;its text at the NES's full 8 pixels (set B, white on black: the DLI's);
+;else mode 4. Not on the title, which has its own rows. (Each row's
+;interrupt bit kept.)
+DialogModes:
+        LDA TitleOn             ;
+        CMP #$01                ;
+        BEQ DialogModesDone     ;
+        LDY #$04                ;
+        LDA DialogOn            ;
+        BEQ +                   ;
+        LDY #$02                ;
+*       STY VbiTmp              ;
+        LDX #2+3*DLG_FIRST      ;
+DialogModeRow:
+        LDA DList,X             ;
+        AND #$F0                ;
+        ORA VbiTmp              ;
+        STA DList,X             ;
+        INX                     ;
+        INX                     ;
+        INX                     ;
+        CPX #2+3*DL_ROWS        ;
+        BNE DialogModeRow       ;
+DialogModesDone:
+        RTS                     ;
+
 ;The display list interrupts (people.asm's DLI), each at the end of a row
 ;for the next: where a townsperson's player moves or changes color there
 ;(RowHP2/RowHP3: DrawPeople sets them, and calls this after), at the end
@@ -1420,8 +1497,7 @@ DLIBitRows:
         LDX #$02                ;
         LDY #$00                ;
 DLIBitRow:
-        LDA RowHP2+1,Y          ;
-        ORA RowHP3+1,Y          ;
+        LDA RowHP3+1,Y          ;
         AND Tmp3                ;
         BNE DLIOn               ;
         CPY #DLG_FIRST-1        ;
@@ -1521,14 +1597,16 @@ SetColor:
         DEC GreyTime            ;
 SetColored:
         LDX #$00                ;The hero's colors (carrying the princess:
-        LDA ModFlags            ;the other pair).
+        LDA ModFlags            ;the other three).
         AND #F_CARRY            ;
         BEQ +                   ;
-        LDX #$02                ;
+        LDX #$03                ;
 *       LDA HeroColors,X        ;
         STA COLPM0              ;
         LDA HeroColors+1,X      ;
         STA COLPM1              ;
+        LDA HeroColors+2,X      ;
+        STA COLPM2              ;
         LDA #>CharsetA          ;
         STA CHBASE              ;
         LDA #<DList             ;
@@ -1557,6 +1635,7 @@ VBI:
         TYA                     ;
         PHA                     ;
         JSR SetHardware         ;
+        JSR DialogModes         ;
         LDA #$00                ;The first row's DLI is row 1's.
         STA DliRow              ;
         LDX #<DLI               ;The interrupts: a battle's own chain, or the
@@ -1597,12 +1676,7 @@ VBI:
         LDA POT1                ;
         STA PotY                ;
         STA POTGO               ;Start the next stick scan.
-        LDA RowHP2              ;(0: as it is.)
-        BEQ +                   ;
-        STA HPOSP2              ;
-        LDA RowC2               ;
-        STA COLPM2              ;
-*       LDA RowHP3              ;
+        LDA RowHP3              ;(0: as it is.)
         BEQ +                   ;
         STA HPOSP3              ;
         LDA RowC3               ;

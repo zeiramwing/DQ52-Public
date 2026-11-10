@@ -56,6 +56,73 @@ and relocated from the disassembly, on a software NES in the 5200. It
 worked, but at about 70% of the NES's speed, and was retired once the
 native engine passed it. Commit c51bc31 is the last that has it.
 
+## What differs from the NES game, and why
+
+The game's rules, sums, maps, text and music are the NES's. What had to
+change comes from the 5200's hardware, and each change was the least that
+made it fit. Everything here has been tested in the atari800 emulator
+only, not yet on a real 5200.
+
+| The 5200's limit | What the port does about it |
+|---|---|
+| **160 colour pixels across**, not 256 (colour text mode: 4 wide pixels a character) | Every map tile, monster and figure is squeezed to half its width at build time, keeping thin lines (outlines, mortar) over the fill around them. |
+| **5 colours a screen row** (4, and a fifth chosen per character), not 4 palettes of 3 | Each map gets a colour plan made from its NES palette. A monster's rows get their own colours, so the map beside the battle window is shown in the nearest of those. Some NES colours share one. |
+| **4 one-colour sprites**, not 64 | See the townspeople, below. The hero has three of them, for his own three colours. Monsters are drawn in the background, not as sprites. |
+| **128 characters a set** for map and window text together | Window text is in capitals (below). A town's graphics are capped at 76 characters. A monster has 63 at most: its least used shapes take the nearest other's. |
+| **No battery memory** | The King gives a 20-character password, not a saved game (the start menu's NEW GAME and CONTINUE are the port's own). It keeps experience, gold, items, equipment and the quest's progress, not the name: that is asked for again. |
+| **4 sound channels, 8-bit pitch on most** | The first voice has exact pitch (two channels joined). The second and the bass are 8-bit, a little off in the top octaves. The square waves' tone settings (duty) are not kept. Sound effects share the second voice's channel. |
+
+### The townspeople
+
+The NES moves up to 20 people at once as sprites. With one sprite to
+spare for them, the port draws the people into each town's map instead:
+
+- **They stand still.** No one wanders. Guards, shopkeepers, innkeepers,
+  the King and everyone else the game stands still are where the game has
+  them. Those who wandered stand on their town's main floor, within 6
+  blocks of where the game starts them, never in a doorway or passage or
+  in front of a counter.
+- **They face down, always**, and do not turn to the hero when he talks
+  to them: one picture each, not four.
+- **They step in place**, in time with the hero, as on the NES.
+- **A few are still sprites**, in fewer colours: the princess, the staff
+  of rain's old man, the Dragonlord, and one person each in Brecconary
+  and Rimuldar who did not fit in the 76 characters.
+
+### Text
+
+- **Windows are in capitals**: the status, command, shop, item and spell
+  windows, YES/NO, and the credits. Lower case would need codes the
+  towns' graphics use. The hero's name shows in capitals there too.
+- **The dialog window keeps the NES's own letters**, lower case and all,
+  at their full width: its rows switch to the 5200's high-resolution
+  mode (one colour, white on black) while it is up. On a real 5200
+  through a TV's composite input, such thin white strokes may show faint
+  colour fringes; the emulator does not show this.
+
+### Battles and figures
+
+- The battle scene is the NES's, in a window on the map; in caves the
+  monster stands on black, with no scene.
+- The Dragonlord's true form is on a black screen, as on the NES, in four
+  colours: his oranges come out brown.
+- The hero carrying the princess: her hair is dark red, not brown (four
+  colours from three sprites).
+
+### Controls
+
+The lower fire button is the NES's A, the upper its B. On the keypad,
+Start passes the title, Pause holds the game while walking, and keys 1-8
+do a command at once (the port's own shortcut).
+
+### Known rough edges
+
+- When the status window appears after the hero has stood still, and on
+  the first step after it, a frame runs long: that step takes 17 frames,
+  not 16. Walking otherwise takes the NES's 16 frames a step.
+- The cartridge is a 512KB SuperCart (atari800 type 74), larger than any
+  cartridge sold for the 5200.
+
 ## The native engine
 
 A second codebase, written for the 5200 from the ground up rather than run
@@ -248,7 +315,7 @@ walking through Brecconary's streets among its people.
     inventory unless it is full. Selling pays half the price.
   - Magic keys (6 at most) and fairy water.
   - Inns: the price for the town, then a night with the screen dark and
-    the inn's tune, HP and MP restored, and "Good morning."
+    the inn's tune, HP and MP restored, and the innkeeper's greeting.
   - ITEM lists the hero's goods. Herbs heal 23 to 30 HP; the wings fly
     back beside Tantegel; the dragon's scale is put on; the torch and
     fairy water give their messages (fairy water's monster-repelling is
@@ -465,8 +532,7 @@ band's colors, so water there can show grey or brown.
 
 - The Dragonlord's two forms: beating the first (no excellent moves
   against either) brings, after the game's pause, his second: all of its
-  HP, its own music and opening message. It has no picture: its battle
-  window stays black. Beating it says his end, then (a button) he is dead
+  HP, its own music and opening message. Beating it says his end, then (a button) he is dead
   (no more hurtful ground), HP and MP full, and the hero is outside his
   castle on the overworld, facing down. The enemies' records now hold
   40 (both forms). Test: `lordwin` (a level 30 hero in Erdrick's gear
@@ -587,6 +653,108 @@ band's colors, so water there can show grey or brown.
   copied part of a row, marked the bridge as built (BridgeY), and could
   write a stray byte into the hero's player (a line of pixels above him).
   Test: `bridgeclosed`.
+- Townspeople stand still, and most are drawn into the background: with
+  no one wandering, each town's people are drawn into its map as composite
+  blocks (the floor under them with their pixels from the ROM, each pixel
+  in the nearest of the colors its character can show) wherever the
+  town's 64 characters and its spare block numbers allow (78 of the
+  game's 120). They are still in the town's people list (mobile $80), so
+  TALK reaches them; they just are not drawn as sprites. Those with the
+  most others a row or less away go first, so the sprites left crowd the
+  two players' rows least. Guards, shopkeepers, innkeepers, the King and
+  everyone else the game stands still keep their places; where three
+  sprites would still share rows on a screen, one that wandered in the
+  game is moved to the nearest free floor within 5 blocks that ends it
+  (convert.py's spread_sprites: one Garinham townsperson, two blocks). The
+  princess, the staff of rain's old man and the Dragonlord's floor keep
+  sprites (they come and go). More color, no flicker for those drawn in
+  the background, and in Brecconary the main loop takes 4,950 cycles a
+  frame on average (it was 11,400).
+- Less work for the people: no one wanders, so MovePeople and each
+  person's step and offsets are gone; and a map has one person at most
+  not drawn in its background (the build stops otherwise), found when
+  its people load (SpriteOne): with none DrawPeople returns at once, else
+  PlacePeople and Redraw work on that one, not the whole list. In
+  Brecconary DrawPeople takes 990 cycles a frame on average, 2,740 at
+  most (it was 2,480 and 8,210), and the program is 226 bytes shorter.
+  The townspeople's step in place (AnimStep) is now last in the frame,
+  and waits a frame when a step of the hero's began in it (the longest).
+- The hero on three players, in his own colors: no map has more than
+  one person left as a sprite, so the people use player 3 only (DrawOne;
+  the DLI and VBI move only it) and player 2 is the hero's. His frames
+  (convert.py's hero_frames: 16, the last 8 carrying the princess, 64
+  bytes each, in bank 7 at GFX_HERO) are players 0-2's lines; each NES
+  color shows as COLPM0, COLPM1, their overlap or COLPM2, chosen for the
+  least error: white, blue and his skin's pink (it was light blue), and
+  carrying her, her white, pink, his blue and her dark red hair. ShowHero
+  reads the frame from the bank (and puts back the bank that was in);
+  HeroAt places or hides all three players. The RAM copies of his frames
+  (HeroGfx, CarryGfx) are gone.
+- Room: one routine draws the four window templates (DrawTemplate), one
+  gives a set A glyph's address (CharPtr), one selects the messages bank
+  (SelectMsg). Set B, the same for every map since the dialog went to
+  mode 2, is in bank 7 once (GFX_SETB; LoadSetB at power on and after
+  the title): a map's image is $500 bytes, not $900, 27KB less in all
+  and 1KB less to copy on each map load. The profile build fits again.
+- The townspeople drawn in the background step in place, as the hero
+  does (every 16 frames, in time with him): convert.py's map_image makes
+  each background figure in both steps of its walk, and lists the
+  characters of theirs that differ in the other (none a block's own; one
+  two looks share with different steps stands still): anim.bin, in bank
+  7 at GFX_ANIM, each map's codes and other-step glyphs. LoadAnim copies
+  the map's to RAM (AnimCodes, AnimGlyphs at $2B00) and AnimStep swaps
+  them with set A's when FrameCount's bit 4 changes (not at power-on). No
+  extra character codes: 27 characters step in Brecconary, 25 in Kol
+  and Rimuldar, 17 in Tantegel.
+- The dialog window in high resolution: while it is up its rows
+  (DLG_FIRST on) are ANTIC mode 2 (the VBI's DialogModes), and set B
+  holds each text tile at the NES's full 8 pixels (convert.py's
+  hires_char), white on black (COLPF1's brightness on COLPF2, set by the
+  DLI at the window's top, or BattleDLI3 in a fight). The rows span the
+  screen and the window clears them, so nothing else shows in mode 2.
+  The name slots now take the name's capitals from set A (NameGlyphs),
+  not set B's glyphs: the status window shows the name in capitals, like
+  the rest of the windows' text.
+- The Dragonlord's second form has his picture: the game's end boss
+  (LoadEndBossGFX: 19 background tiles and 64 sprites from CHR bank 0,
+  his two palettes), read from the ROM by battle.py's end_boss, moved
+  (BOSS_SHIFT) to stand in the battle window (the loader's quirks kept:
+  each background tile two to the left of its listed address, a lone
+  $FF in the sprite list taking the next byte's value) and converted as the
+  monsters on black are, his band from row 6. The whole view is black
+  round him, as in the game (ComposeScene: no map beside the window or
+  above it), so the 12 codes the map would take beside the window
+  (TEXT_END on) hold his glyphs past 63: 75 (BOSS_GLYPHS; LoadMonster
+  copies them after the text). An all-black character is code 0 now,
+  for every monster, not a glyph of its own. Test: `lordtrue`.
+- The hero carrying the princess has his own frames, the game's
+  (CharSpriteTbl's carrying figure, his palette and hers): convert.py's
+  carry_frames, in bank 7 (GFX_CARRY), copied to RAM at power on
+  (CarryGfx, $2A00); ShowHero takes them while ModFlags' carry bit is
+  set. His colors and hers are four, the two multicolor players show
+  three, so her white and skin share their overlap: brown hair, violet
+  armor, lavender white (the overlap kept a shade of one of the pair, not
+  a hue of its own). Test: `rescue`.
+- Nearly every townsperson in the background: everyone faces down,
+  always (no one turns to the hero on TALK), so a figure needs one look,
+  not four. Those who wandered in the game are set down on their town's
+  main floor (the commonest block under them) at the nearest open spot
+  within 6 blocks: never beside a wall, counter, door or sign, never next
+  to someone else, never cutting a passage (convert.py's onto_floor), so
+  their looks share characters. A town may also put map characters on
+  set A's codes past the text, 116-127 (76 characters, not 64; no
+  battle there reads those codes). One townsperson in Brecconary and one
+  in Rimuldar still do not fit and stay sprites, alone on their rows,
+  as do the princess, the staff of rain's old man and the Dragonlord.
+- Window text in capitals, from fixed codes: set A holds the digits, the
+  capitals, the frame and the arrow, then the name slots, the apostrophe
+  and the STATUS window's mark (114-115), then the name window's - . ? !
+  (116-119, which towns may take: that window opens only at power-on, on
+  the start map). Lower case shows as its capital (TextA), so nothing is
+  copied into set A as windows need it: TileA, its glyph cache and
+  ResetTiles are gone (about 200 bytes of program). The dialog window
+  still shows lower case (set B). A battle's map characters take codes
+  from 116 (TEXT_END), not 114.
 - No flicker as the view scrolls: a person who moved a line (every one of
   them, as the view scrolls) is drawn over where it was, then the one
   line it left is cleared; only one gone, in the other player or moved

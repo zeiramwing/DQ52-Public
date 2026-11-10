@@ -30,8 +30,7 @@
 
 ;The King's password window (poweron.asm, in MSG_BANK): its steps.
 PwShowP:
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         JMP PwShowStep          ;
 
 ;--------------------------------------[At power-on]-------------------------------------------------
@@ -42,15 +41,13 @@ PwShowP:
 .alias FarPtr           $07AF   ;2: FarOut's routine.
 
 PowerOn:
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         JMP PasswordFrame       ;
 FarOut:
         STX FarPtr              ;
         STY FarPtr+1            ;
         JSR +                   ;
-        LDA #MSG_BANK           ;
-        JMP SelectBank          ;
+        JMP SelectMsg           ;
 *       JMP (FarPtr)            ;
 
 ;The title screen (build.py's title_bytes, in PEOPLE_BANK): its characters
@@ -61,8 +58,7 @@ TitleShow:
         LDY #>TownBattle        ;
         JSR FarOut              ;
         LDA #$00                ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         LDA #PEOPLE_BANK        ;
         JSR SelectBank          ;
         LDX #$00                ;
@@ -113,10 +109,10 @@ TitleRow:
         LDA WinRow              ;
         CMP #28                 ;
         BNE TitleRow            ;
-        LDA #MSG_BANK           ;
-        JMP SelectBank          ;
+        JMP SelectMsg           ;
 TitleEnd:
         JSR BuildDList          ;(Mode 4 rows again.)
+        JSR LoadSetB            ;
         JSR TownBattleEnd       ;The map's sets and colors back, for the
         LDA MapId               ;windows, but the people off, the hero still
         JSR LoadMap             ;out of sight (the screen is then made
@@ -125,8 +121,7 @@ TitleEnd:
 GameStart:
         JSR TownBattleEnd       ;
         LDA #HERO_HPOS          ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         LDA MapId               ;
         JMP LoadMap             ;
 

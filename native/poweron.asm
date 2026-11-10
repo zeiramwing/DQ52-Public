@@ -455,8 +455,7 @@ PwDecChar:
         STA Equipped            ;
         LDA PwBuf+10            ;
         STA ModFlags            ;
-        LDA #MSG_BANK           ;(The level tables' bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(The level tables' bank.)
         LDA #$01                ;The level the experience is, its stats,
         STA Level               ;HP and MP full.
 *       LDX Level               ;
@@ -581,8 +580,7 @@ CrScreen:
         LDY #>TownBattle        ;
         JSR FarOut              ;
         LDA #$00                ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
 *       JSR BlankView           ;The view blank.
 CrLine:
         JSR CrByte              ;Its rows: row, column, length, tiles.
@@ -981,8 +979,7 @@ MenuPick:
         JMP PwOpen              ;
 *       JMP NameOpen            ;
 
-;The view blank (a screen with nothing on it but windows), every text
-;glyph free again (ResetTiles).
+;The view blank (a screen with nothing on it but windows).
 BlankView:
         LDA #$00                ;
         STA CrRow               ;
@@ -1000,7 +997,7 @@ BlankView:
         LDA CrRow               ;
         CMP #28                 ;
         BNE --                  ;
-        JMP ResetTiles          ;
+        RTS                     ;
 
 ;------------------------------------[A full bag (DiscardItem)]--------------------------------------
 
@@ -1059,7 +1056,7 @@ DsCursed:
         LDX #DS_WHICH           ;
         JMP ShopSay             ;
 StepDsGot:
-        LDA DsDrop              ;and obtained the new one.
+        LDA DsDrop              ;and the new one is his.
         SEC                     ;
         SBC #ITM_BASE           ;
         JSR RemoveItem          ;

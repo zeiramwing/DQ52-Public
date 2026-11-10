@@ -472,7 +472,7 @@ def main():
         sys.exit("build: the credits do not fit in MSG_BANK")
     at = CREDITS_AT - 0x8000
     halves[MSG_BANK][at:at + len(credits)] = credits
-    gfx = open(os.path.join(out, "hero.bin"), "rb").read() + open(os.path.join(out, "people.bin"), "rb").read()
+    gfx = bytes(0x100) + open(os.path.join(out, "people.bin"), "rb").read()   # (A page unused: the hero's once.)
     if len(gfx) != 0x500:
         sys.exit(f"build: the hero and people graphics are {len(gfx)} bytes, not 1280")
     # Then the tables copied to RAM at $0800 at power on: TextA, TextB, the
@@ -482,7 +482,17 @@ def main():
     tables += bytes(0x3E0 - len(tables))                # (BridgeRow's RAM.)
     tables += open(os.path.join(out, "colors.bin"), "rb").read()    # PersonColors, at $0BE0.
     gfx += tables + bytes(0x400 - len(tables))
-    gfx += open(os.path.join(out, "lord.bin"), "rb").read()        # The Dragonlord's frames.
+    gfx += open(os.path.join(out, "lord.bin"), "rb").read()        # The Dragonlord's frames,
+    gfx += bytes(0xA00 - len(gfx))
+    gfx += bytes(0x100)                                            # (unused),
+    if len(gfx) != 0xB00:
+        sys.exit("build: the carrying frames run past GFX_ANIM")
+    gfx += open(os.path.join(out, "anim.bin"), "rb").read()        # the townspeople's other step,
+    if len(gfx) > 0x1800:
+        sys.exit("build: the townspeople's steps run past GFX_SETB")
+    gfx += bytes(0x1800 - len(gfx))
+    gfx += open(os.path.join(out, "setb.bin"), "rb").read()        # set B (GFX_SETB),
+    gfx += open(os.path.join(out, "hero.bin"), "rb").read()        # the hero's 16 frames (GFX_HERO).
     halves[GFX_BANK][:len(gfx)] = gfx                   # Copied to RAM at power on.
     header = bytes([0x64, 0x72, 0x61, 0x67, 0x6F, 0x6E, 0x00, 0x77, 0x61, 0x72, 0x72, 0x69, 0x6F, 0x72]
                    + [0] * 6 + [0x00, 0xFF, labels["start"] & 0xFF, labels["start"] >> 8])

@@ -102,8 +102,7 @@ TakeCommand:
         LDA #BLK_CHEST          ;
         JSR BlockIs             ;
         BCC TakeNothing         ;
-        LDA #MSG_BANK           ;(The chests' tables' bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(The chests' tables' bank.)
         LDX #NUM_CHESTS-1       ;Which: the map's, at the hero's place.
 TakeFind:
         LDA ChestMap,X          ;

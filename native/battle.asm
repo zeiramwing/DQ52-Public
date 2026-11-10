@@ -243,8 +243,7 @@ CaveEncounter:
         BEQ CaveEnemy           ;
         RTS                     ;
 CaveEnemy:
-        LDA #MSG_BANK           ;(EnGroups's bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(EnGroups's bank.)
         JSR NextRandom          ;One of the row's 5.
         LDA Random+1            ;
         AND #$07                ;
@@ -358,8 +357,7 @@ StartBattle:
         STA EnStop              ;
         JSR TownBattle          ;(Off the overworld: no people, black.)
         LDA #$00                ;The hero out of sight.
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         LDX Enemy               ;HP: 3/4 to all of its base HP.
         LDA EnemyMaxHP          ;
         STA EnemyHP             ;
@@ -401,8 +399,8 @@ StartBattle:
         JSR ShowStatus          ;
         LDA #B_INTRO            ;
         STA BState              ;
-        LDA #$E2                ;A Slime draws near! (His second form: high
-        LDX Enemy               ;message $19, his true self.)
+        LDA #$E2                ;The enemy appears: said. (His second form:
+        LDX Enemy               ;high message $19, his own.)
         CPX #EN_DRAGONLORD2     ;
         BNE +                   ;
         LDA #$19                ;
@@ -479,8 +477,13 @@ LoadHead:
         STA DstPtr              ;
         LDA #>[LowerSet+8]      ;
         STA DstPtr+1            ;
-        LDX MonGlyphs           ;
-        JSR CopyGlyphs          ;
+        LDX MonGlyphs           ;(His second form's past 63: below, to
+        CPX #64                 ;TEXT_END on, after the text.)
+        BCC +                   ;
+        LDX #63                 ;
+*       JSR CopyGlyphs          ;
+        TYA                     ;
+        JSR SrcAdd              ;
         LDA #MONSTER_BANK+1     ;UpperSet's, from the second monster bank
         JSR SelectBank          ;(with the battle text); none in a cave,
         LDA MapId               ;whose map's copy is there (TownMap).
@@ -533,6 +536,23 @@ LowerText:
         STA LowerSet+NAME_SLOT*8,X ;
         DEX                     ;
         BPL -                   ;
+        LDA MonGlyphs           ;Glyphs past 63 (his second form's, only
+        SEC                     ;in a dark battle: SrcPtr still at them).
+        SBC #63                 ;
+        BCC MonGlyphsIn         ;
+        BEQ MonGlyphsIn         ;
+        PHA                     ;
+        LDX Enemy               ;
+        LDA EnemyDarkBank       ;
+        JSR SelectBank          ;
+        LDA #<[LowerSet+TEXT_END*8] ;
+        STA DstPtr              ;
+        LDA #>[LowerSet+TEXT_END*8] ;
+        STA DstPtr+1            ;
+        PLA                     ;
+        TAX                     ;
+        JSR CopyGlyphs          ;
+MonGlyphsIn:
                                 ;ByteMap0-1: each byte's 4 pixels through
         LDA #$00                ;MonVals (without bit 7, with it).
         STA Count               ;
@@ -617,10 +637,15 @@ ComposeScene:
         LDA #SCENE_GLYPHS+1     ;
         JSR NewBand             ;
         LDA #SCENE_ROW          ;A cave's: from the monster's top (no scene;
-        LDX MapId               ;the map round it is black).
-        BEQ +                   ;
+        LDX MapId               ;the map round it is black). His second
+        BEQ ComposeFrom         ;form's: the whole view, black but him.
         LDA MonTop              ;
-*       STA WinRow              ;
+        LDX Enemy               ;
+        CPX #EN_DRAGONLORD2     ;
+        BNE ComposeFrom         ;
+        LDA #$00                ;
+ComposeFrom:
+        STA WinRow              ;
 ComposeRow:
         LDA WinRow              ;
         CMP MonTop              ;
@@ -640,7 +665,11 @@ ComposeCol:
         BCS +                   ;
         JSR SceneCell           ;
         JMP ComposePut          ;
-*       JSR GetChar             ;
+*       LDA #$00                ;(His second form: black round him.)
+        LDX Enemy               ;
+        CPX #EN_DRAGONLORD2     ;
+        BEQ ComposePut          ;
+        JSR GetChar             ;
         JSR RemapChar           ;
 ComposePut:
         JSR PutChar             ;
@@ -674,9 +703,9 @@ ComposeKeep:
 
 ;A new band: no map characters given codes yet, the first free code A.
 NewBand:
-        CMP #64                 ;(After 63, 114.)
+        CMP #64                 ;(After 63, TEXT_END.)
         BNE +                   ;
-        LDA #114                ;
+        LDA #TEXT_END           ;
 *       STA NextFree            ;
         LDA #$FF                ;
         LDX #$00                ;
@@ -806,11 +835,11 @@ RemapDone:
         LDX Tmp                 ;
         STA RemapTbl,X          ;
         PHA                     ;
-        LDX Count               ;The next free code: after 63, 114; none
-        INX                     ;after 127.
+        LDX Count               ;The next free code: after 63, TEXT_END;
+        INX                     ;none after 127.
         CPX #64                 ;
         BNE +                   ;
-        LDX #114                ;
+        LDX #TEXT_END           ;
 *       CPX #128                ;
         BNE +                   ;
         LDX #$00                ;
@@ -860,8 +889,7 @@ LoadEnemy:
         LDA SrcPtr+1            ;
         ADC #>ENEMY_RECS        ;
         STA SrcPtr+1            ;
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDY #15                 ;
 *       LDA (SrcPtr),Y          ;
         STA EnemyRec,Y          ;
@@ -963,7 +991,7 @@ HeroFirst:
 StepIntro:
         JSR HeroFirst           ;
         BCS StepRound           ;
-        LDA #$E4                ;The Slime attacked before Loto was ready.
+        LDA #$E4                ;The enemy goes first: said.
         LDX #B_ENEMY            ;
         JMP Say                 ;
 StepRound:
@@ -1065,14 +1093,14 @@ StepAttack:
         STA Excellent           ;
         LDA #SFX_EXCELLENT      ;
         JSR PlaySFX             ;
-        LDA #$04                ;Excellent move!
+        LDA #$04                ;An excellent move: said.
         LDX #B_ATTACK           ;
         JMP SayHi               ;
 *       LDA Damage              ;
         BNE +                   ;
         LDA #SFX_MISSED1        ;
         JSR PlaySFX             ;
-        LDA #$E7                ;The attack failed...
+        LDA #$E7                ;The hero misses: said.
         LDX #B_ENEMY            ;
         JMP Say                 ;
 *       JSR NextRandom          ;
@@ -1089,14 +1117,14 @@ StepAttack:
         BCC StepDamage          ;
         LDA #SFX_MISSED1        ;
         JSR PlaySFX             ;
-        LDA #$0A                ;It is dodging!
+        LDA #$0A                ;The enemy dodges: said.
         LDX #B_ENEMY            ;
         JMP SayHi               ;
 StepDamage:
         LDA #SFX_ENEMY_HIT      ;
         JSR PlaySFX             ;
-        LDA Damage              ;"The Slime's Hit Points have been reduced
-        STA Amount              ;by 1."
+        LDA Damage              ;The damage to the enemy: said, with its
+        STA Amount              ;amount.
         LDA #$00                ;
         STA Amount+1            ;
         LDA EnemyHP             ;
@@ -1235,8 +1263,7 @@ StepGold:
 ;A new level, if the experience reaches the next (LevelExp): the stats of
 ;it (LevelStr and so on), and what grew.
 StepLevel:
-        LDA #MSG_BANK           ;(The level tables' bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(The level tables' bank.)
         LDX Level               ;
         CPX #30                 ;
         BCS LevelNone           ;
@@ -1374,8 +1401,7 @@ EndBattle:
         STA Mode                ;
         STA StandTime           ;
         LDA #HERO_HPOS          ;
-        STA HPOSP0              ;
-        STA HPOSP1              ;
+        JSR HeroAt              ;
         JSR TownBattleEnd       ;
         JSR DLIBits             ;
         JSR PlayMapMusic        ;
@@ -1417,23 +1443,8 @@ DeathTalk:
 
 ;The battle's command window: FIGHT, SPELL, RUN, ITEM, the cursor on FIGHT.
 OpenBattleCmd:
-        LDA #CMD_ROW            ;
-        STA WinRow              ;
-        LDY #$00                ;
-BCmdRow:
-        LDA #CMD_COL            ;
-        STA WinCol              ;
-*       LDA BattleCmdTemplate,Y ;
-        STY Tmp3                ;
-        JSR PutTileA            ;
-        LDY Tmp3                ;
-        INY                     ;
-        LDA WinCol              ;
-        CMP #CMD_COL+CMD_WIDTH  ;
-        BNE -                   ;
-        INC WinRow              ;
-        CPY #CMD_WIDTH*6        ;
-        BNE BCmdRow             ;
+        LDX #TPL_BATTLE         ;
+        JSR DrawTemplate        ;
         LDA #$00                ;
         STA Cursor              ;
         LDA #$02                ;Two rows: down from the first only.

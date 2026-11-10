@@ -15,16 +15,13 @@
 .alias PersonX          $0400   ;Each person's block (where it is going,
 .alias PersonY          $0420   ;while it walks),
 .alias PersonFace       $0440   ;facing,
+.alias SpriteOne        $04C0   ;The one person not in the map's background ($FF: none).
 .alias PersonGfx        $0460   ;graphic,
 .alias PEOPLE_BANK      10      ;The people's tables (convert.py).
 .alias PersonCtl        $0480   ;dialog (DialogLo/Hi's index),
-.alias PersonMob        $04A0   ;whether it wanders,
-.alias PersonMove       $04C0   ;frames left of its step,
-.alias PersonOffX       $04E0   ;and how far it still is from its block:
-.alias PersonOffY       $0500   ;color clocks and lines (signed).
-.alias RowHP2           $0520   ;For each display row: player 2's position,
+.alias PersonMob        $04A0   ;whether it wanders (bit 0) or is drawn in the
+                                ;map's background (bit 7),
 .alias RowHP3           $0540   ;player 3's,
-.alias RowC2            $0560   ;and their colors.
 .alias RowC3            $0580   ;
 .alias OldKey           $2900   ;Each person as last drawn (Redraw): its
 .alias OldTop           $2918   ;frame + 1 and player (0: not drawn), its
@@ -38,11 +35,9 @@
 .alias PHpos            $0618   ;horizontal position,
 .alias PRow             $0630   ;and the display row its top is in.
 
-.alias End2             $D2     ;The last line players 2 and 3 are in use
 .alias End3             $D3     ;to (0: free from the top).
 .alias NShown           $D4     ;
 .alias PI               $D5     ;Person being worked on.
-.alias PJ               $D6     ;
 .alias RowTop           $D7     ;Window test: the person's rows and columns.
 .alias RowBot           $D8     ;
 .alias ColL             $D9     ;
@@ -68,7 +63,9 @@ LoadPeople:
         ADC PeopleCount         ;
         STA PeopleEnd           ;
         LDY PeopleFirst         ;
-        LDX #$00                ;
+        LDX #$FF                ;
+        STX SpriteOne           ;
+        INX                     ;
 LoadPerson:
         CPY PeopleEnd           ;
         BEQ LoadedPeople        ;
@@ -92,11 +89,9 @@ LoadPerson:
         STA PersonCtl,X         ;
         LDA INIT_MOBILE,Y        ;
         STA PersonMob,X         ;
-        LDA #$00                ;
-        STA PersonMove,X        ;
-        STA PersonOffX,X        ;
-        STA PersonOffY,X        ;
-        INY                     ;
+        BMI +                   ;(Bit 7: in the map's background. The one
+        STX SpriteOne           ;who is not, if any: the one drawn.)
+*       INY                     ;
         INX                     ;
         JMP LoadPerson          ;
 LoadedPeople:
@@ -106,8 +101,7 @@ LoadedPeople:
         JSR ClearPlayers        ;Players 2 and 3 cleared, nothing drawn.
         LDA #$00                ;
         LDX #DL_ROWS            ;
-*       STA RowHP2,X            ;
-        STA RowHP3,X            ;
+*       STA RowHP3,X            ;
         DEX                     ;
         BPL -                   ;
         RTS                     ;
@@ -130,99 +124,106 @@ PersonAtNone:
         CLC                     ;
         RTS                     ;
 
-;--------------------------------------[Wandering]---------------------------------------------------
+;--------------------------------------[Stepping in place]-------------------------------------------
 
-;A frame of the people walking: each walking one moves on (a line every
-;frame, a color clock every other), and one chosen at random (one in 32 a
-;frame) may start a step.
-MovePeople:
-        LDX PeopleOn            ;
-MoveNext:
-        DEX                     ;
-        BMI MoveStart           ;
-        LDA PersonMove,X        ;
-        BEQ MoveNext            ;
-        STA PeopleDirty         ;
-        DEC PersonMove,X        ;
-        LDA PersonOffY,X        ;
-        BEQ MoveSideways        ;
-        BMI MoveDown            ;
-        DEC PersonOffY,X        ;
-        JMP MoveSideways        ;
-MoveDown:
-        INC PersonOffY,X        ;
-MoveSideways:
-        LDA PersonMove,X        ;
-        LSR                     ;
-        BCC MoveNext            ;
-        LDA PersonOffX,X        ;
-        BEQ MoveNext            ;
-        BMI MoveRight           ;
-        DEC PersonOffX,X        ;
-        JMP MoveNext            ;
-MoveRight:
-        INC PersonOffX,X        ;
-        JMP MoveNext            ;
+;The townspeople drawn in the background step in place as the hero does,
+;every 16 frames: the characters of theirs that differ in the other step
+;(convert.py's map_image) swap their glyphs in set A with AnimGlyphs.
 
-MoveStart:
-        LDA Random              ;One of 32 may start a step.
-        AND #$1F                ;
-        CMP PeopleOn            ;
-        BCS PeopleDone          ;
+.alias AnimHold         $294D   ;Non-zero: not this frame (a step of the hero's began in it).
+.alias AnimPhase        $294E   ;FrameCount's bit 4 as the glyphs shown are (0: as loaded),
+.alias AnimCount        $294F   ;how many characters step,
+.alias AnimCodes        $2950   ;32: their codes,
+.alias AnimGlyphs       $2B00   ;256: their glyphs in the step not shown.
+
+;A new map: its townspeople's other step to RAM (GFX_ANIM's).
+LoadAnim:
+        LDA #GFX_BANK           ;
+        JSR SelectBank          ;
+        LDA MapId               ;
+        ASL                     ;
         TAX                     ;
-        LDA PersonMob,X         ;
-        BEQ PeopleDone          ;
-        LDA PersonMove,X        ;
-        BNE PeopleDone          ;
-        STX PI                  ;
-        LDA Random+1            ;In a random direction.
-        AND #$03                ;
-        STA PJ                  ;
-        TAY                     ;
-        LDA PersonX,X           ;
+        LDA GFX_ANIM,X          ;
+        STA Ptr                 ;
+        LDA GFX_ANIM+1,X        ;
+        STA Ptr+1               ;
+        LDY #$00                ;
+        STY AnimPhase           ;
+        LDA (Ptr),Y             ;
+        STA AnimCount           ;
+        BEQ AnimLoaded          ;
+        INY                     ;
+AnimCode:
+        LDA (Ptr),Y             ;Their codes (from byte 1),
+        STA AnimCodes-1,Y       ;
+        CPY AnimCount           ;
+        INY                     ;
+        BCC AnimCode            ;
+        TYA                     ;then their glyphs.
         CLC                     ;
-        ADC DirX,Y              ;
-        STA BX                  ;
-        CMP MapSz               ;Not off the map,
-        BCS PeopleDone          ;
-        LDA PersonY,X           ;
-        CLC                     ;
-        ADC DirY,Y              ;
-        STA BY                  ;
-        CMP MapHt               ;
-        BCS PeopleDone          ;
-        LDA BX                  ;not onto the hero,
-        CMP HeroX               ;
-        BNE +                   ;
-        LDA BY                  ;
-        CMP HeroY               ;
-        BEQ PeopleDone          ;
-*       JSR PersonAt            ;nor another person,
-        BCS PeopleDone          ;
-        JSR GetBlock            ;nor a wall.
-        TAY                     ;
-        LDA BlockWall,Y         ;
-        BNE PeopleDone          ;
-        LDX PI                  ;
-        LDY PJ                  ;
-        TYA                     ;
-        STA PersonFace,X        ;
-        LDA BX                  ;
-        STA PersonX,X           ;
-        LDA BY                  ;
-        STA PersonY,X           ;
-        LDA StepOffX,Y          ;Starting a block back.
-        STA PersonOffX,X        ;
-        LDA StepOffY,Y          ;
-        STA PersonOffY,X        ;
-        LDA #16                 ;
-        STA PersonMove,X        ;
-        STA PeopleDirty         ;
-PeopleDone:
+        ADC Ptr                 ;
+        STA Ptr                 ;
+        BCC +                   ;
+        INC Ptr+1               ;
+*       LDA AnimCount           ;
+        ASL                     ;
+        ASL                     ;
+        ASL                     ;
+        TAX                     ;(32 at most: 256 bytes, X 0 for all.)
+        LDY #$00                ;
+AnimGlyph:
+        LDA (Ptr),Y             ;
+        STA AnimGlyphs,Y        ;
+        INY                     ;
+        DEX                     ;
+        BNE AnimGlyph           ;
+AnimLoaded:
         RTS                     ;
 
-StepOffX:       .byte 0, $F8, 0, 8      ;By direction: up, right, down, left
-StepOffY:       .byte 16, 0, $F0, 0     ;($F8 is -8, $F0 -16).
+;Each frame, last (but one in which a step of the hero's began, the
+;longest: then the next): when FrameCount's bit 4 changes, the stepping characters'
+;glyphs swapped with AnimGlyphs (not at power-on, whose windows and title
+;have set A).
+AnimStep:
+        LDA AnimHold            ;
+        BEQ +                   ;
+        LDA #$00                ;
+        STA AnimHold            ;
+        RTS                     ;
+*       LDA FrameCount          ;
+        AND #$10                ;
+        CMP AnimPhase           ;
+        BEQ AnimDone            ;
+        LDX Mode                ;
+        CPX #$06                ;
+        BEQ AnimDone            ;
+        STA AnimPhase           ;
+        LDA AnimCount           ;
+        BEQ AnimDone            ;
+        LDX #$00                ;
+        STX Tmp2                ;
+AnimChar:
+        LDY Tmp2                ;Its code * 8 in set A.
+        LDA AnimCodes,Y         ;
+        JSR CharPtr             ;
+        LDY #$00                ;
+AnimByte:
+        LDA (Ptr),Y             ;
+        PHA                     ;
+        LDA AnimGlyphs,X        ;
+        STA (Ptr),Y             ;
+        PLA                     ;
+        STA AnimGlyphs,X        ;
+        INX                     ;
+        INY                     ;
+        CPY #$08                ;
+        BNE AnimByte            ;
+        INC Tmp2                ;
+        LDA Tmp2                ;
+        CMP AnimCount           ;
+        BNE AnimChar            ;
+AnimDone:
+        RTS                     ;
 
 ;--------------------------------------[Drawing]-----------------------------------------------------
 
@@ -232,22 +233,21 @@ StepOffY:       .byte 16, 0, $F0, 0     ;($F8 is -8, $F0 -16).
 ;is at rows whose position is 0).
 DrawPeople:
         LDA PeopleOn            ;
-        BNE +                   ;
+        BEQ DrawNone            ;
+        LDA SpriteOne           ;(All in the background: nothing to draw.)
+        BPL +                   ;
+DrawNone:
         RTS                     ;
 *       JSR PeopleChanged       ;
         BCS +                   ;
         RTS                     ;
 *       `prof_begin 6
         LDA #$00                ;Nothing wanted yet (NewKey), no row in use.
-        LDX PeopleOn            ;
-*       DEX                     ;
+        LDX SpriteOne           ;
         STA NewKey,X            ;
-        BNE -                   ;
-        STA End2                ;
         STA End3                ;
         LDX #DL_ROWS            ;No changes at any row yet.
-*       STA RowHP2,X            ;
-        STA RowHP3,X            ;
+*       STA RowHP3,X            ;
         DEX                     ;
         BPL -                   ;
         STA RowMask             ;
@@ -295,30 +295,10 @@ DrawOne:
         SEC                     ;row before's last line, where the DLI
         SBC ShV                 ;moves it.
 *       STA RowStart            ;
-        LDA End2                ;Player 2 free by then?
-        CMP RowStart            ;
-        BCC InPlayer2           ;
-        LDA End3                ;Player 3?
-        CMP RowStart            ;
-        BCC InPlayer3           ;
-        JMP DrawSkip            ;Neither: not drawn.
-InPlayer2:
-        LDA PTop,X              ;
-        CLC                     ;
-        ADC #15                 ;
-        STA End2                ;
-        LDY PersonGfx,X         ;Its position and color at its row.
-        LDA PersonColors,Y      ;
-        LDY PRow,X              ;
-        STA RowC2,Y             ;
-        LDA PHpos,X             ;
-        STA RowHP2,Y            ;
-        JSR MarkRow             ;
-        JSR FrameOf             ;Its key: frame + 1, in player 2.
-        CLC                     ;
-        ADC #$01                ;
-        STA NewKey,X            ;
-        JMP DrawSkip            ;
+        LDA End3                ;Player 3 free by then? (Player 2 is the
+        CMP RowStart            ;hero's now: a map has one person at most
+        BCC InPlayer3           ;not drawn in its background.)
+        JMP DrawSkip            ;No: not drawn.
 InPlayer3:
         LDA PTop,X              ;
         CLC                     ;
@@ -414,22 +394,14 @@ FrameOf:
 ;cleared (people in a player have a line between them at least, as
 ;DrawPeople gives each its player, so that line is no one else's).
 Redraw:
-        LDX PeopleOn            ;Who is gone, in the other player, or
-RedrawWipe:                     ;moved more than a line: wiped.
-        DEX                     ;
-        BMI RedrawDraws         ;
-        JSR Moved               ;
-        BCC RedrawWipe          ;
+        LDX SpriteOne           ;(The one person drawn.) Gone, or moved
+        JSR Moved               ;more than a line: wiped.
+        BCC RedrawDraw          ;
         LDA OldKey,X            ;
         JSR PlayerOf            ;
         LDA OldTop,X            ;
         JSR ClearPerson         ;
-        JMP RedrawWipe          ;
-RedrawDraws:
-        LDX PeopleOn            ;
 RedrawDraw:
-        DEX                     ;
-        BMI RedrawDone          ;
         LDA NewKey,X            ;
         BEQ RedrawKeep          ;
         CMP OldKey,X            ;
@@ -468,8 +440,6 @@ RedrawKeep:
         STA OldKey,X            ;
         LDA PTop,X              ;
         STA OldTop,X            ;
-        JMP RedrawDraw          ;
-RedrawDone:
         RTS                     ;
 ;C set if person X was drawn and is now gone, in the other player, or
 ;more than a line from where it was. X kept.
@@ -502,12 +472,11 @@ PlayerOf:
 *       STA Ptr+1               ;
         RTS                     ;
 
-;Clear players 2 and 3, and what Redraw knows was drawn in them.
+;Clear player 3 (the people's), and what Redraw knows was drawn in it.
 ClearPlayers:
         LDA #$00                ;
         TAX                     ;
-*       STA Player2,X           ;
-        STA Player3,X           ;
+*       STA Player3,X           ;
         INX                     ;
         BNE -                   ;
         LDX #MAX_PEOPLE-1       ;
@@ -650,25 +619,23 @@ LineBottom:
 PlacePeople:
         LDA #$00                ;
         STA NShown              ;
-        LDX PeopleOn            ;
+        LDX SpriteOne           ;The one not drawn in the map's background
+        BPL PlaceOne            ;(convert.py's people_into_blocks), if any.
 PlaceNext:
-        DEX                     ;
-        BPL +                   ;
         RTS                     ;
-*       LDA PersonX,X           ;Blocks from the view's left, + 1: 0-17.
+PlaceOne:
+        LDA PersonX,X           ;Blocks from the view's left, + 1: 0-17.
         SEC                     ;
         SBC LeftBlock           ;
         CLC                     ;
         ADC #$01                ;
         CMP #18                 ;
         BCS PlaceNext           ;
-        ASL                     ;Position = 64 + (that - 1) * 8 + offset
-        ASL                     ;- FineX = 56 + that * 8 + offset - FineX.
+        ASL                     ;Position = 64 + (that - 1) * 8 - FineX
+        ASL                     ;= 56 + that * 8 - FineX.
         ASL                     ;
         CLC                     ;
         ADC #56                 ;
-        CLC                     ;
-        ADC PersonOffX,X        ;
         SEC                     ;
         SBC FineX               ;
         STA PHpos,X             ;
@@ -683,21 +650,10 @@ PlaceNext:
         ADC #$01                ;
         CMP #16                 ;
         BCS PlaceNext           ;
-        ASL                     ;Top = 16 + (that - 1) * 16 + offset -
-        ASL                     ;FineY = that * 16 + offset - FineY; a
-        ASL                     ;carry or a borrow on the way: above the
-        ASL                     ;screen, or below it.
-        LDY PersonOffY,X        ;
-        BMI PlaceUp             ;
-        CLC                     ;
-        ADC PersonOffY,X        ;
-        BCS PlaceNext           ;
-        BCC PlaceFine           ;
-PlaceUp:
-        CLC                     ;(A negative offset: no carry is a borrow.)
-        ADC PersonOffY,X        ;
-        BCC PlaceNext           ;
-PlaceFine:
+        ASL                     ;Top = 16 + (that - 1) * 16 - FineY = that
+        ASL                     ;* 16 - FineY; a borrow: above the screen.
+        ASL                     ;
+        ASL                     ;
         SEC                     ;
         SBC FineY               ;
         BCC PlaceNext           ;
@@ -894,12 +850,12 @@ BattleDLI3:
         LDA #>CharsetB          ;
         STA WSYNC               ;
         STA CHBASE              ;
-        LDA MapColors+1         ;
+        LDA #$00                ;(The dialog's mode 2 rows: white on black,
+        STA COLPF2              ;the black first, for its top line.)
+        LDA #DLG_INK            ;
         STA COLPF1              ;
         LDA MapColors           ;
         STA COLPF0              ;
-        LDA MapColors+2         ;
-        STA COLPF2              ;
         LDA MapColors+3         ;
         STA COLPF3              ;
         LDA MapColors+4         ;
@@ -922,6 +878,10 @@ DLI:
         LDA #>CharsetB          ;
         STA WSYNC               ;
         STA CHBASE              ;
+        LDA #$00                ;(Mode 2 rows: the window's black first, in
+        STA COLPF2              ;time for its top line; the text's
+        LDA #DLG_INK            ;brightness.)
+        STA COLPF1              ;
 DLIPeople:
         TXA                     ;
         PHA                     ;
@@ -936,13 +896,10 @@ DLIPeople:
         LSR                     ;
         TAX                     ;
 DLIRows:
-        LDA RowHP2,X            ;No wait for the line's end: a person is
-        BEQ +                   ;put in a player only from the line after
-        STA HPOSP2              ;its last one (DrawPeople), so the line
-        LDA RowC2,X             ;this runs on shows nothing of it.
-        STA COLPM2              ;
-*       LDA RowHP3,X            ;
-        BEQ +                   ;
+        LDA RowHP3,X            ;No wait for the line's end: a person is
+        BEQ +                   ;put in the player only from the line after
+                                ;its last one (DrawPeople), so the line
+                                ;this runs on shows nothing of it.
         STA HPOSP3              ;
         LDA RowC3,X             ;
         STA COLPM3              ;

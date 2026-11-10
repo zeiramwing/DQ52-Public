@@ -181,7 +181,7 @@ SpellGo:
 
 ;HURT and SLEEP, or a spell where it cannot work.
 SpellFizzle:
-        LDA #$33                ;Nothing happened.
+        LDA #$33                ;Nothing comes of it: said.
         JMP ShopEnd             ;
 
 ;HEAL: 10-17 HP back; HEALMORE 85-100; no more than the most.
@@ -690,7 +690,7 @@ BattleItem:
         JSR GoodsList           ;
         LDA ListCount           ;
         BNE +                   ;
-        LDA #$3D                ;Nothing of use.
+        LDA #$3D                ;No use here: said.
         LDX #B_ROUND            ;
         JMP Say                 ;
 *       JSR SaveUnder           ;
@@ -747,13 +747,13 @@ StepTune:
         LDA ItemName            ;
         CMP #HARP_ITEM          ;
         BNE +                   ;
-        LDA #$F4                ;The enemy looks happy.
+        LDA #$F4                ;The enemy is pleased: said.
         LDX #B_ENEMY            ;
         JMP Say                 ;
 *       LDA Enemy               ;
         CMP #EN_GOLEM           ;
         BEQ +                   ;
-        LDA #$33                ;Nothing happens.
+        LDA #$33                ;Nothing comes of it: said.
         LDX #B_ENEMY            ;
         JMP Say                 ;
 *       LDA #$01                ;

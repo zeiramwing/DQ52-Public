@@ -44,6 +44,10 @@ AT = {
     "ThrnRoomDat": (0, 0x8402),         # The throne room.
     "BrecconaryDat": (0, 0x8716),       # Brecconary.
     "CharSpriteTbl": (0, 0x9334),       # Character sprites: 4 facings of 256 bytes.
+    "EndBossBGTiles": (0, 0xBBF8),      # The end boss (LoadEndBossGFX): background tiles,
+    "EndBossSPTiles": (0, 0xBC3D),      # sprites,
+    "EndBossPal1": (0, 0xBD41),         # and palettes: background,
+    "EndBossPal2": (0, 0xBD4F),         # sprites.
     "TantMobTbl": (0, 0x9764),          # Townspeople: 3 bytes each, $FF ends.
     "TantStatTbl": (0, 0x9783),         #
     "ThRmMobTbl": (0, 0x97A2),          #

@@ -27,7 +27,7 @@ import colordata  # noqa: E402
 import monsters  # noqa: E402
 
 ENEMIES = 40                    # The Dragonlord's two forms are 38 and 39.
-NO_PICTURE = {39}               # His second form: its window on black, no picture.
+EN_TRUE_FORM = 39               # The Dragonlord's second form: the end boss's picture (end_boss).
 WHITE = 0x30                    # NES white: the text's color.
 
 
@@ -76,7 +76,7 @@ def sprite_lists(rom):
         mirrored = w >= 0x8000
         data = list(rom.read(1, w if mirrored else w + 0x8000, 3 * 64))
         out.append(monsters.sprite_list(data, mirrored))
-    return out + [[] for _ in NO_PICTURE]
+    return out + [[]]                   # (His second form: end_boss.)
 
 
 def enemy_palettes(rom):
@@ -94,13 +94,16 @@ def nearest(rgb, choices):
 # first tile, as the game sets it: below $C1 0 (the sky), below $CA 1,
 # below $DE 2, else 3.
 SCENE_COL, SCENE_ROW, SCENE_SIZE, SCENE_SHOWN = 10, 6, 14, 12
-MAX_GLYPHS = 63                 # Codes 1-63: the text is 64-113, and the
+MAX_GLYPHS = 63                 # Codes 1-63: the text is 64-115, and the
                                 # engine puts the map beside the window in
-                                # the codes left (and 114-127).
+                                # the codes left (and TEXT_END-127).
+TEXT_END = 116                  # (convert.py's WIDE_CODE.) His second form's
+BOSS_GLYPHS = MAX_GLYPHS + 128 - TEXT_END   # glyphs go on there too: no map
+                                # shows round him.
 
 
 def glyph_code(i):
-    return i + 1
+    return i + 1 if i < MAX_GLYPHS else TEXT_END + i - MAX_GLYPHS
 
 
 def scene_tiles(rom):
@@ -152,7 +155,59 @@ def glyph_distance(a, b):
     return sum(1 for x, y in zip(a, b) for i in range(0, 8, 2) if (x >> i & 3) != (y >> i & 3))
 
 
-def monster(chr_rom, sprites, palette, scene, map_regs):
+# The end boss (LoadEndBossGFX): on a black screen, 19 background tiles
+# (EndBossBGTiles: a tile and its PPU address each, then 4 attribute
+# bytes) and 64 sprites (EndBossSPTiles: as sprite RAM, $FF $FF ending),
+# all from CHR bank 0, in his own palettes (EndBossPal1: background,
+# EndBossPal2: sprites). Moved by BOSS_SHIFT to stand in the scene window.
+BOSS_SHIFT = (16, -14)          # (NES pixels: from x 81-155, y 65-156.)
+
+
+def end_boss(rom, chr_rom):
+    """{(x, y): NES color} of the end boss's opaque pixels, at the scene
+    window's place on the screen."""
+    bg = rom.table("EndBossBGTiles", 0x45)
+    sprites = rom.table("EndBossSPTiles", 0x104)
+    pal_bg, pal_sp = rom.table("EndBossPal1", 12), rom.table("EndBossPal2", 12)
+    tiles = [(bg[i], bg[i + 1] | bg[i + 2] << 8) for i in range(0, len(bg), 3)]
+    # (The game puts each of the first 19 two to the left of its address:
+    # LoadEndBossGFX takes 2 off all but the last 4, the attributes'.)
+    tiles = [(t, at - 2 if i < len(tiles) - 4 else at) for i, (t, at) in enumerate(tiles)]
+    attrs = {at: t for t, at in tiles if at >= 0x23C0}
+    px = {}
+    for tile, at in tiles:
+        if at >= 0x23C0:
+            continue
+        row, col = divmod(at - 0x2000, 32)
+        a = attrs.get(0x23C0 + row // 4 * 8 + col // 4, 0)
+        pal = a >> ((row % 4) // 2 * 4 + (col % 4) // 2 * 2) & 3
+        tp = colordata.tile_pixels(chr_rom, 0, tile)
+        for y in range(8):
+            for x in range(8):
+                if tp[y][x]:
+                    px[(col * 8 + x, row * 8 + y)] = pal_bg[pal * 3 + tp[y][x] - 1]
+    ram, i = [], 0                      # (As the game copies them to sprite RAM:
+    while len(ram) < 256:               # a lone $FF takes the next byte's value,
+        b = sprites[i]                  # $FF $FF ends them.)
+        if b == 0xFF:
+            b = sprites[i + 1]
+            if b == 0xFF:
+                break
+        ram.append(b)
+        i += 1
+    listed = [ram[i:i + 4] for i in range(0, len(ram) - 3, 4)]
+    for y0, tile, attr, x0 in reversed(listed):     # (Earlier sprites in front.)
+        tp = colordata.tile_pixels(chr_rom, 0, tile)
+        for y in range(8):
+            for x in range(8):
+                v = tp[7 - y if attr & 0x80 else y][7 - x if attr & 0x40 else x]
+                if v:
+                    px[(x0 + x, y0 + 1 + y)] = pal_sp[(attr & 3) * 3 + v - 1]
+    dx, dy = BOSS_SHIFT
+    return {(x + dx, y + dy): c for (x, y), c in px.items()}
+
+
+def monster(chr_rom, sprites, palette, scene, map_regs, picture=None):
     """A monster on the scene: its record (see below) and its glyph count.
 
     The lower band runs from the monster's top row to row 17. Its colors:
@@ -162,10 +217,13 @@ def monster(chr_rom, sprites, palette, scene, map_regs):
     shows in the band (each pixel value's new one for a character without
     bit 7, then with it, then the new bit 7 for each), the glyph count, then 14 codes a row with the monster and 14 a row
     without it (once it is gone), then the glyphs (codes 1-63, 114-127)."""
-    px = monsters.picture(chr_rom, sprites)
-    colors = {k: (palette[(k >> 2) * 3 + (k & 3) - 1] if k & 3 else 0x0F) for k in range(16)}
+    if picture is None:
+        px = monsters.picture(chr_rom, sprites)
+        colors = {k: (palette[(k >> 2) * 3 + (k & 3) - 1] if k & 3 else 0x0F) for k in range(16)}
+    else:                                       # (NES colors already: the end boss.)
+        px, colors = picture, {c: c for c in set(picture.values())}
     sq = {k: colors[v] for k, v in monsters.squeeze(px, colors).items() if v is not None}
-    top = max(SCENE_ROW + 1, min((y for x, y in sq), default=8 * (SCENE_ROW + SCENE_SHOWN - 1)) // 8)
+    top = max(SCENE_ROW + (picture is None), min((y for x, y in sq), default=8 * (SCENE_ROW + SCENE_SHOWN - 1)) // 8)
     rows = range(top, SCENE_ROW + SCENE_SHOWN)
     counts = {}
     for color in sq.values():
@@ -218,14 +276,16 @@ def monster(chr_rom, sprites, palette, scene, map_regs):
                 g, flag = glyph(r, c, with_monster)
                 cells[which].append((g, flag))
                 uses[g] = uses.get(g, 0) + 1
-    glyphs = sorted(uses, key=lambda g: -uses[g])
-    kept = glyphs[:MAX_GLYPHS]
+    blank = bytes(8)                    # (All black: code 0, no glyph of its own.)
+    glyphs = sorted((g for g in uses if g != blank), key=lambda g: -uses[g])
+    room = MAX_GLYPHS if picture is None else BOSS_GLYPHS
+    kept = glyphs[:room]
     # Too many: the least used take the nearest kept glyph's place.
     place = {g: i for i, g in enumerate(kept)}
-    for g in glyphs[MAX_GLYPHS:]:
+    for g in glyphs[room:]:
         place[g] = min(range(len(kept)), key=lambda i: glyph_distance(g, kept[i]))
     glyphs = kept
-    grids = tuple([glyph_code(place[g]) | flag for g, flag in cells[w]] for w in (0, 1))
+    grids = tuple([0 if g == blank else glyph_code(place[g]) | flag for g, flag in cells[w]] for w in (0, 1))
     # How the map's pixels show in the band: for a character without and
     # with bit 7 (COLPF3 for value 3), each value's new one and the new bit 7.
     values, inverse = [], []
@@ -233,6 +293,7 @@ def monster(chr_rom, sprites, palette, scene, map_regs):
         targets = [remap[0], remap[1], remap[2], remap[3 + b]]
         values += [min(t, 3) for t in targets]
         inverse.append(0x80 if targets[3] == 4 else 0)
+    glyphs = glyphs or [blank]          # (One at least: CopyGlyphs. A dark one all black on black.)
     record = bytes([top] + regs[2:5] + values + inverse + [len(glyphs)]) + bytes(grids[0]) + bytes(grids[1])
     return record + b"".join(glyphs), len(glyphs)
 
@@ -245,9 +306,12 @@ def monster_records(rom, chr_rom, plan):
     scene = scene_colors(chr_rom, tiles, pal)
     lists = sprite_lists(rom)
     palettes = enemy_palettes(rom)
-    records = [monster(chr_rom, lists[e], palettes[e], scene, map_regs) for e in range(ENEMIES)]
-    # And each on black, for the caves' battles (no scene there).
-    dark = [monster(chr_rom, lists[e], palettes[e], {}, map_regs) for e in range(ENEMIES)]
+    boss = end_boss(rom, chr_rom)
+    pictures = [boss if e == EN_TRUE_FORM else None for e in range(ENEMIES)]
+    records = [monster(chr_rom, lists[e], palettes[e], scene, map_regs, pictures[e]) for e in range(ENEMIES)]
+    # And each on black, for the caves' battles (no scene there; his
+    # second form's too, on his castle's floor).
+    dark = [monster(chr_rom, lists[e], palettes[e], {}, map_regs, pictures[e]) for e in range(ENEMIES)]
     return records, upper_band(chr_rom, tiles, slot, inv), dark
 
 

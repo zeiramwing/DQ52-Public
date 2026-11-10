@@ -80,7 +80,7 @@ StepItRainbow:
         STA ShopState           ;
         RTS                     ;
 RainbowFail:
-        LDA #$05                ;No rainbow appears.
+        LDA #$05                ;Nothing comes of it: said.
         JMP ShopEnd             ;
 
 ;Its tune out: the map's music, and walking again.
@@ -312,7 +312,10 @@ StepFieldDead:
 .alias LORD_SLOT        5       ;The graphic he has (the wizard's, elsewhere).
 .alias GFX_PEOPLE       $8100   ;GFX_BANK: the people's frames,
 .alias GFX_COLORS       $88E0   ;their colors (PersonColors's), the lord's,
-.alias GFX_LORD         $8900   ;and his frames.
+.alias GFX_LORD         $8900   ;and his frames;
+.alias GFX_HERO         $9C00   ;the hero's frames (ShowHero),
+.alias GFX_ANIM         $8B00   ;the townspeople's other step (LoadAnim),
+.alias GFX_SETB         $9800   ;set B (LoadSetB).
 
 ;At a map's load: in his floor the Dragonlord's figure and color in the
 ;wizard's slot (the game's ChkDrgnLordNPC), elsewhere the wizard's.
@@ -472,7 +475,7 @@ RainbowMan:
         LDA #ITM_DROP           ;
         JSR HasItem             ;
         BCC +                   ;
-        LDA #$A5                ;No business here.
+        LDA #$A5                ;He has nothing for the hero.
         JMP ShopEnd             ;
 *       LDA #ITM_TOKEN          ;
         JSR HasItem             ;
@@ -514,7 +517,7 @@ RainMan:
         LDA #ITM_STAFF          ;
         JSR HasItem             ;
         BCC ++                  ;
-*       LDA #$A5                ;No business here.
+*       LDA #$A5                ;He has nothing for the hero.
         JMP ShopEnd             ;
 *       LDA #ITM_HARP           ;
         JSR HasItem             ;

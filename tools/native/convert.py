@@ -5,6 +5,7 @@ characters with their colors chosen, the overworld becomes block numbers
 with the water shores worked out, and so on. The engine only copies.
 """
 import os
+from collections import Counter
 import re
 import sys
 
@@ -105,14 +106,17 @@ def block_chars(chr_rom, blocks, used, slot, inv, bank=BG_BANK):
 
 SPRITE_BANK = 2
 HERO_OFFSET = 0x80              # CharSpriteTbl: no weapon, no shield; +8 the other step.
-CARRY_COLOR = 0x48              # The hero's body color while he carries the princess.
+CARRY_OFFSET = 0xC0             # CharSpriteTbl: the hero carrying the princess.
+ANIM_MAX = 32                   # A map's townspeople's characters that step (AnimCodes).
+GFX_ANIM = 0x8B00               # Where anim.bin goes in GFX_BANK (castle.asm's alias).
 
 
-def hero_pixels(chr_rom, table, direction, step):
-    """The hero's 16x16 NES color indices facing DIRECTION (0 up, 1 right,
-    2 down, 3 left), in step 0 or 1, as DoSprites puts its 4 sprites."""
-    at = direction * 256 + HERO_OFFSET + step * 8
-    px = [[0] * 16 for _ in range(16)]
+def colour_pixels(chr_rom, table, palettes, direction, step, offset):
+    """A 16x16 figure's NES colors (None: clear) facing DIRECTION in step 0
+    or 1, from CharSpriteTbl's OFFSET, each sprite in its own palette of
+    PALETTES (RegSPPal: 3 colors each)."""
+    at = direction * 256 + offset + step * 8
+    px = [[None] * 16 for _ in range(16)]
     for i in range(4):
         tile, attr = table[at + 2 * i], table[at + 2 * i + 1]
         t = colordata.tile_pixels(chr_rom, SPRITE_BANK, tile)
@@ -122,8 +126,68 @@ def hero_pixels(chr_rom, table, direction, step):
             t = t[::-1]
         for y in range(8):
             for x in range(8):
-                px[(i >> 1) * 8 + y][(i & 1) * 8 + x] = t[y][x]
+                if t[y][x]:
+                    px[(i >> 1) * 8 + y][(i & 1) * 8 + x] = palettes[(attr & 3) * 3 + t[y][x] - 1]
     return px
+
+
+def squeeze_colours(row):
+    """A row of 16 colors (None: clear) to 8, keeping thin features (as
+    squeeze_tile): of two that differ, a color over clear, else the one
+    whose run is shorter, on a tie the rarer in the row."""
+    count = Counter(row)
+    out = []
+    for x in range(0, 16, 2):
+        a, b = row[x], row[x + 1]
+        if a != b:
+            if a is None or b is None:
+                a = b if a is None else a
+            else:
+                run_a = 1 + (x > 0 and row[x - 1] == a)
+                run_b = 1 + (x < 14 and row[x + 2] == b)
+                a = a if (run_a < run_b if run_a != run_b else count[a] <= count[b]) else b
+        out.append(a)
+    return out
+
+
+def hero_frames(chr_rom, table, palettes, offset):
+    """The hero's 8 frames (direction * 2 + step) from CharSpriteTbl's OFFSET
+    (HERO_OFFSET, or CARRY_OFFSET: carrying the princess), 64 bytes each:
+    players 0, 1 and 2's 16 lines, 16 unused; and the three player colors.
+    Each NES color shows as the nearest of COLPM0, COLPM1, where both
+    overlap (the two ORed: multicolor players) and COLPM2, the three chosen
+    for the least error: his own three colors come out exact, and with
+    her four the overlap makes the fourth."""
+    frames = [[squeeze_colours(r) for r in colour_pixels(chr_rom, table, palettes, d, s, offset)]
+              for d in range(4) for s in range(2)]
+    weights = Counter(c for f in frames for row in f for c in row if c is not None)
+    want = {c: colordata.NES_RGB[c] for c in weights}
+    dist = [{c: colordata.rgb_distance(want[c], colordata.ATARI_RGB[a]) for c in want} for a in range(128)]
+    thirds = sorted({colordata.NES_TO_ATARI[c] // 2 for c in want})    # (COLPM2: one of theirs.)
+    best = None
+    for a in range(128):
+        for b in range(a, 128):
+            pair = {c: min(dist[a][c], dist[b][c], dist[a | b][c]) for c in want}
+            for t in thirds:
+                err = sum(n * min(pair[c], dist[t][c]) for c, n in weights.items())
+                if best is None or err < best[0]:
+                    best = (err, a, b, t)
+    _, a, b, t = best
+    shown = {}
+    for c in want:
+        e = [dist[a][c], dist[b][c], dist[a | b][c], dist[t][c]]
+        k = e.index(min(e))
+        shown[c] = (k in (0, 2), k in (1, 2), k == 3)   # (In player 0, 1, 2.)
+    data = bytearray()
+    for f in frames:
+        for player in (0, 1, 2):
+            for row in f:
+                byte = 0
+                for c in row:
+                    byte = byte << 1 | (c is not None and shown[c][player])
+                data.append(byte)
+        data += bytes(16)
+    return bytes(data), [2 * a, 2 * b, 2 * t]
 
 
 def squeeze_wide(px):
@@ -134,52 +198,6 @@ def squeeze_wide(px):
         right = colordata.squeeze_tile([row[8:]] * 8)[0]
         out.append([left >> (6 - 2 * i) & 3 for i in range(4)] + [right >> (6 - 2 * i) & 3 for i in range(4)])
     return out
-
-
-def player_colors(colors, weights):
-    """Two player colors for a sprite's 3 NES colors, with GTIA's multicolor
-    players: where players 0 and 1 overlap the color is COLPM0 | COLPM1.
-
-    Returns (masks, colpm0, colpm1): masks[c] = (in player 0, in player 1)
-    for NES color c 1-3. Tries every way of giving each color player 0,
-    player 1 or both, with every pair of Atari colors.
-    """
-    rgb = [colordata.NES_RGB[c] for c in colors]
-    best = None
-    for perm in ((1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)):
-        for a in range(0, 256, 2):
-            ea = [colordata.rgb_distance(rgb[i], colordata.ATARI_RGB[a // 2]) for i in range(3)]
-            for b in range(0, 256, 2):
-                eb = [colordata.rgb_distance(rgb[i], colordata.ATARI_RGB[b // 2]) for i in range(3)]
-                ab = colordata.ATARI_RGB[(a | b) // 2]
-                err = 0
-                for i in range(3):
-                    shown = perm[i]
-                    e = ea[i] if shown == 1 else eb[i] if shown == 2 else \
-                        colordata.rgb_distance(rgb[i], ab)
-                    err += weights[i] * e
-                if best is None or err < best[0]:
-                    best = (err, perm, a, b)
-    _, perm, a, b = best
-    masks = {i + 1: (perm[i] in (1, 3), perm[i] in (2, 3)) for i in range(3)}
-    return masks, a, b
-
-
-def hero_frames(chr_rom, table, palette):
-    """8 frames (direction * 2 + step) of 2 players * 16 bytes, and the two
-    player colors."""
-    frames = [squeeze_wide(hero_pixels(chr_rom, table, d, s)) for d in range(4) for s in range(2)]
-    weights = [sum(row.count(c) for f in frames for row in f) for c in (1, 2, 3)]
-    masks, a, b = player_colors(palette, weights)
-    data = bytearray()
-    for f in frames:
-        for player in (0, 1):
-            for row in f:
-                byte = 0
-                for c in row:
-                    byte = byte << 1 | (c != 0 and masks[c][player])
-                data.append(byte)
-    return bytes(data), a, b
 
 
 # Blocks the hero and the townspeople cannot walk onto: water, rock walls,
@@ -209,6 +227,13 @@ FRAME = range(0x61, 0x6A)
 ARROW = 0x42
 BLANKS = (0x5F, 0x60)
 NAME_SLOTS = 4                  # The status window shows the name's first 4 letters.
+LOWER = range(0x0A, 0x24)       # Shown in windows as capitals (UPPER, + $1A).
+# Punctuation with codes of its own in set A, after the name slots: the
+# apostrophe (item names) and the STATUS window's mark, in every map; then
+# the name window's - . ? ! (it opens only at power-on, on the start map),
+# whose codes a wide town gives its own characters (WIDE_CODE on).
+PUNCT = (0x40, 0x44)
+NAME_PUNCT = (0x49, 0x47, 0x4B, 0x4C)
 
 
 def text_tiles(chr_rom, blocks):
@@ -228,6 +253,14 @@ def text_char(chr_rom, tile, slot):
     return colordata.squeeze_tile([[slot[0][c] for c in row] for row in px])
 
 
+def hires_char(chr_rom, tile):
+    """A text tile as a mode 2 character (set B: the dialog window's rows,
+    shown in ANTIC mode 2): the NES tile at its full 8 pixels, every lit
+    pixel the text's (COLPF1's brightness on COLPF2)."""
+    px = colordata.tile_pixels(chr_rom, BG_BANK, tile)
+    return bytes(sum(1 << (7 - x) for x in range(8) if row[x]) for row in px)
+
+
 def text_blocks(rom):
     """All 19 text blocks' bytes (one after another in bank 2), and where
     each starts."""
@@ -236,38 +269,271 @@ def text_blocks(rom):
 
 
 TEXT_BASE_CODE = 64             # Set A: map characters below, text from here.
-IMAGE_SIZE = 0x900              # Per map: set A, set B, a page of tables.
+IMAGE_SIZE = 0x500              # Per map: set A, a page of tables. (Set B is every map's: setb.bin.)
 IMAGES_PER_BANK = 7             # 7 * $900 in a bank's data half; more go in IMAGES2_BANK, 3.
 TOWNS_PER_BANK = 15             # 1KB town pages in a bank's data half.
 
 
-def map_image(chr_rom, blocks, used, plan, tiles):
+def composite_chars(chr_rom, blocks, plan, pf, base, person):
+    """Block BASE with a townsperson drawn into it as background (people_looks), 4 mode 4 characters (upper left, upper right, lower left,
+    lower right) and their bit 7. PERSON is 16 rows of 16 NES colors (None
+    where the block shows): each such pixel becomes the nearest of the colors
+    its character can show (COLBK, COLPF0, COLPF1, and COLPF2 or COLPF3 as
+    the block's palette has bit 7)."""
+    pal, src, slot, inv = plan
+    tiles, bpal = blocks[base]
+    regs = [0x00, pf[0], pf[1], pf[3] if inv[bpal] else pf[2]]
+    rgb = [colordata.ATARI_RGB[a // 2] for a in regs]
+    out = []
+    for q, tile in enumerate(tiles):
+        px = colordata.tile_pixels(chr_rom, BG_BANK, tile)
+        vals = [[slot[bpal][c] for c in row] for row in px]
+        for y in range(8):
+            for x in range(8):
+                c = person[(q >> 1) * 8 + y][(q & 1) * 8 + x]
+                if c is not None:
+                    want = colordata.NES_RGB[c]
+                    vals[y][x] = min(range(4), key=lambda v: colordata.rgb_distance(want, rgb[v]))
+        out.append((colordata.squeeze_tile(vals), inv[bpal]))
+    return out
+
+
+def sprite_table_of(rom):
+    return rom.table("CharSpriteTbl", 1024)
+
+
+# Maps whose people must stay sprites: the Dragonlord's floor (his figure is
+# swapped in there) and the staff of rain's cave (its old man goes); and the
+# princess anywhere (in the throne room only once she is home).
+PEOPLE_SPRITE_MAPS = {6, 13}
+PRINCESS_CONTROL = 0x6F
+
+
+def people_looks(chr_rom, town, grid, border, people, table, sprite_pal):
+    """The town's people standing still, drawn into its background where
+    there is room: for each look (the block under them, their figure and
+    facing), a composite block on a block number the town does not use
+    (map_image takes the ones that fit), in both steps of the figure's
+    walk. Returns those blocks (the block under, step 0, step 1) and each
+    person's look's block number (None: a sprite)."""
+    if town["number"] in PEOPLE_SPRITE_MAPS:
+        return {}, [None] * len(people)
+    used = {b for row in grid for b in row} | {border}
+    spare = [b for b in range(40) if b not in used]
+    extra, by_look, looks = {}, {}, [None] * len(people)
+    # Those with the most others a row or less from them first: what stays a
+    # sprite then crowds the players' rows least (two people a row apart or
+    # less cannot share one; with two players, a third would not show).
+    crowd = [sum(1 for q in people if q is not p and abs(q[2] - p[2]) <= 1) for p in people]
+    for i in sorted(range(len(people)), key=lambda i: -crowd[i]):
+        graphic, x, y, facing, control = people[i][:5]
+        look = (grid[y][x], graphic, facing)
+        if control == PRINCESS_CONTROL or (look not in by_look and not spare):
+            continue
+        if look not in by_look:
+            steps = []
+            for step in (0, 1):
+                px, ppal = maps.person_pixels(chr_rom, table, graphic, facing, step)
+                colors = sprite_pal[ppal * 3:ppal * 3 + 3]
+                steps.append([[colors[c - 1] if c else None for c in row] for row in px])
+            by_look[look] = spare.pop(0)
+            extra[by_look[look]] = (look[0], *steps)
+        looks[i] = by_look[look]
+    return extra, looks
+
+
+def people_into_blocks(grid, people, looks, accepted):
+    """Each person whose look map_image took: its block in the town's map, and
+    the person marked drawn in the background (mobile $80: still talked to,
+    not drawn as a sprite). No one wanders (mobile 0)."""
+    out = []
+    for p, b in zip(people, looks):
+        graphic, x, y, facing, control, _ = p
+        if b in accepted:
+            grid[y][x] = b
+            out.append((graphic, x, y, facing, control, 0x80))
+        else:
+            out.append((graphic, x, y, facing, control, 0))
+    return out
+
+
+FLOOR_REACH = 6                 # How far a wanderer may be moved onto the floor.
+
+
+def open_spot(grid, taken, x, y):
+    """Whether someone standing still at X, Y blocks nothing: the block and
+    its eight neighbors walkable (never beside a wall's gap, a counter, a
+    door or a sign, so no passage or counter is plugged), no one else within
+    a block, and every walkable neighbor still reachable from the others."""
+    h, w = len(grid), len(grid[0])
+    def walk(a, b):
+        return 0 <= b < h and 0 <= a < w and grid[b][a] not in BLOCKED and (a, b) not in taken
+    if not walk(x, y):
+        return False
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if (dx or dy) and (not (0 <= y + dy < h and 0 <= x + dx < w)
+                               or grid[y + dy][x + dx] in BLOCKED or (x + dx, y + dy) in taken):
+                return False
+    near = [(x + dx, y + dy) for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0))]
+    seen, todo = {near[0]}, [near[0]]
+    while todo:
+        a, b = todo.pop()
+        for q in ((a, b - 1), (a + 1, b), (a, b + 1), (a - 1, b)):
+            if q not in seen and q != (x, y) and walk(*q):
+                seen.add(q)
+                todo.append(q)
+    return all(q in seen for q in near)
+
+
+def onto_floor(grid, people):
+    """Each townsperson who wandered in the game (mobile 1) set down on the
+    town's main floor (the commonest block under the wanderers) at the
+    nearest open spot (open_spot) within FLOOR_REACH blocks, facing down:
+    one block under them all, so their looks share characters. Anyone with
+    no such spot keeps the game's place. The others keep theirs."""
+    under = [grid[p[2]][p[1]] for p in people if p[5] and grid[p[2]][p[1]] not in BLOCKED]
+    if not under:
+        return people
+    floor = max(set(under), key=under.count)
+    people = list(people)
+    for i, (g, x, y, f, c, m) in enumerate(people):
+        if not m:
+            continue
+        taken = {(p[1], p[2]) for j, p in enumerate(people) if j != i}
+        if grid[y][x] == floor and open_spot(grid, taken, x, y):
+            continue
+        spots = sorted(((x + dx, y + dy) for dx in range(-FLOOR_REACH, FLOOR_REACH + 1)
+                        for dy in range(-FLOOR_REACH, FLOOR_REACH + 1)
+                        if abs(dx) + abs(dy) <= FLOOR_REACH),
+                       key=lambda q: (abs(q[0] - x) + abs(q[1] - y), q[1], q[0]))
+        for nx, ny in spots:
+            if 0 <= ny < len(grid) and 0 <= nx < len(grid[0]) and grid[ny][nx] == floor \
+                    and open_spot(grid, taken, nx, ny):
+                people[i] = (g, nx, ny, f, c, m)
+                break
+    return people
+
+
+SPREAD_REACH = 5                # How far a wanderer may be moved, in blocks.
+
+
+def crowded(people):
+    """The sprites (mobile 0) a row or less from two others also within a
+    screen's width: the 5200's two sprite players cannot show all three."""
+    sprites = [i for i, p in enumerate(people) if p[5] == 0]
+    out = set()
+    for i in sprites:
+        near = [j for j in sprites if abs(people[j][2] - people[i][2]) <= 1
+                and abs(people[j][1] - people[i][1]) <= 15]
+        if len(near) > 2:
+            out |= set(near)
+    return out
+
+
+def spread_sprites(grid, people, wanders):
+    """Where three sprites would crowd the same rows, one that wandered in the
+    game (WANDERS: never a guard, shopkeeper, the King or anyone the game
+    stands still) is moved to the nearest free floor within SPREAD_REACH
+    blocks that ends the crowding: not a wall, door or counter (BLOCKED), not
+    where anyone stands. The game's own places are kept for everyone else."""
+    people = list(people)
+    for _ in range(len(people)):
+        crowd = crowded(people)
+        movable = [i for i in crowd if wanders[i]]
+        if not movable:
+            break
+        taken = {(p[1], p[2]) for p in people}
+        best = None
+        for i in movable:
+            g, x, y, f, c, m = people[i]
+            for nx, ny in sorted(((x + dx, y + dy) for dx in range(-SPREAD_REACH, SPREAD_REACH + 1)
+                                  for dy in range(-SPREAD_REACH, SPREAD_REACH + 1)),
+                                 key=lambda q: abs(q[0] - x) + abs(q[1] - y)):
+                if not (0 <= ny < len(grid) and 0 <= nx < len(grid[0])) or (nx, ny) in taken:
+                    continue
+                if grid[ny][nx] in BLOCKED or abs(nx - x) + abs(ny - y) > SPREAD_REACH:
+                    continue
+                trial = people[:i] + [(g, nx, ny, f, c, m)] + people[i + 1:]
+                if len(crowded(trial)) < len(crowd):
+                    d = abs(nx - x) + abs(ny - y)
+                    if best is None or d < best[0]:
+                        best = (d, i, nx, ny)
+                    break
+        if best is None:
+            break
+        _, i, nx, ny = best
+        g, x, y, f, c, m = people[i]
+        people[i] = (g, nx, ny, f, c, m)
+    return people
+
+
+TEXT_CODES = len(DIGITS) + len(UPPER) + len(FRAME) + 1 + NAME_SLOTS + len(PUNCT)
+WIDE_CODE = TEXT_BASE_CODE + TEXT_CODES           # A wide map's 65th character's code.
+assert WIDE_CODE == battle.TEXT_END
+
+
+def char_code(i):
+    """Map character I's code: the first 64 their own, a wide map's further
+    ones after the text (WIDE_CODE on)."""
+    return i if i < TEXT_BASE_CODE else WIDE_CODE + i - TEXT_BASE_CODE
+
+
+def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False):
     """A map's 2.25KB image, copied to RAM ($2000) when the hero enters:
     set A (its blocks' characters, then the window text at TEXT_BASE_CODE
     and the name slots), set B (every text tile), and a page of tables:
     each block's 4 characters (+0, +40, +80, +120), whether the hero can
-    walk onto it (+160), and the colors (+200: COLPF0-3, COLBK)."""
+    walk onto it (+160), and the colors (+200: COLPF0-3, COLBK). A WIDE map
+    (a town: no battle there reads set A's codes past the text) may also
+    take the codes from WIDE_CODE to 127, the name window's punctuation's,
+    for more people in the background."""
     pal, src, slot, inv = plan
+    room = TEXT_BASE_CODE + (128 - WIDE_CODE if wide else 0)
     chars, codes = block_chars(chr_rom, blocks, used, slot, inv)
-    free = len(chars)                   # The first code no map character uses.
-    if len(chars) > TEXT_BASE_CODE:
-        sys.exit(f"convert: {len(chars)} map characters, more than {TEXT_BASE_CODE}")
+    block_only = list(chars)                        # (The blocks' own characters.)
+    pf = [colordata.NES_TO_ATARI[pal[(i // 4) * 3 + i % 4 - 1]] for i in src]
+    accepted, second = set(), {}
+    for b, (base, person, person1) in (extra or {}).items():     # (People in the background.)
+        made = composite_chars(chr_rom, blocks, plan, pf, base, person)
+        made1 = composite_chars(chr_rom, blocks, plan, pf, base, person1)
+        new = {data for data, _ in made if data not in chars}
+        if len(chars) + len(new) > room:                # (No room: a sprite then.)
+            continue
+        four = []
+        for (data, bit7), (data1, _) in zip(made, made1):
+            if data not in chars:
+                chars.append(data)
+            four.append(char_code(chars.index(data)) | bit7)
+            second.setdefault(chars.index(data), set()).add(data1)
+        codes[b] = four
+        accepted.add(b)
+    # Their other step: each character of theirs that differs in it, unless
+    # it is also a block's own or two looks' share it with different steps
+    # (then it stands still). The engine swaps them every 16 frames.
+    steps = [(char_code(i), next(iter(d))) for i, d in sorted(second.items())
+             if i >= len(block_only) and len(d) == 1 and next(iter(d)) != chars[i]]
+    if len(steps) > ANIM_MAX:
+        sys.exit(f"convert: {len(steps)} characters of townspeople to animate, more than {ANIM_MAX}")
+    free = char_code(len(chars))        # The first code no map character uses.
+    over, chars = chars[TEXT_BASE_CODE:], chars[:TEXT_BASE_CODE]
     chars += [bytes(8)] * (TEXT_BASE_CODE - len(chars))
     for t in list(DIGITS) + list(UPPER) + list(FRAME) + [ARROW]:
         chars.append(text_char(chr_rom, t, slot))
     chars += [bytes(8)] * NAME_SLOTS
-    chars_b = [bytes(8)] + [text_char(chr_rom, t, slot) for t in tiles]
-    image = bytearray(IMAGE_SIZE)
+    chars += [text_char(chr_rom, t, slot) for t in PUNCT]
+    chars += over or [text_char(chr_rom, t, slot) for t in NAME_PUNCT]  # (Wide: the rest.)
+    image = bytearray(0x900)            # (As in RAM: set B's place skipped below.)
     image[0:len(chars) * 8] = b"".join(chars)
-    image[0x400:0x400 + len(chars_b) * 8] = b"".join(chars_b)
-    for b in range(len(blocks)):
+    for b in range(max(len(blocks), max(codes, default=0) + 1)):
         four = codes.get(b, [0, 0, 0, 0])
         for k in range(4):
             image[0x800 + 40 * k + b] = four[k]
-        image[0x800 + 160 + b] = 1 if b in BLOCKED else 0
+        image[0x800 + 160 + b] = 1 if b in BLOCKED or b in accepted else 0
     pf = [colordata.NES_TO_ATARI[pal[(i // 4) * 3 + i % 4 - 1]] for i in src]
     image[0x800 + 200:0x800 + 205] = bytes(pf + [0x00])
-    return bytes(image), len([c for c in chars[:TEXT_BASE_CODE] if c != bytes(8)]) + 1, free
+    image = image[:0x400] + image[0x800:]
+    return bytes(image), len([c for c in chars[:TEXT_BASE_CODE] if c != bytes(8)]) + 1, free, accepted, steps
 
 
 def write_all(rom_path, out_dir):
@@ -284,39 +550,67 @@ def write_all(rom_path, out_dir):
     text_a = [0] * 256
     for i, t in enumerate(list(DIGITS) + list(UPPER) + list(FRAME) + [ARROW]):
         text_a[t] = TEXT_BASE_CODE + i
+    for t in LOWER:
+        text_a[t] = text_a[t + 0x1A]
     name_slot = TEXT_BASE_CODE + len(list(DIGITS) + list(UPPER) + list(FRAME)) + 1
+    for i, t in enumerate(PUNCT + NAME_PUNCT):
+        text_a[t] = name_slot + NAME_SLOTS + i
     text_b = [0] * 256
     for i, t in enumerate(tiles):
         text_b[t] = i + 1
 
     world = world_blocks(world_types(rom))
     images, counts = [], []
-    image, n, free = map_image(chr_rom, blocks, {b for row in world for b in row},
+    image, n, free, _, _ = map_image(chr_rom, blocks, {b for row in world for b in row},
                                color_plan(rom, chr_rom, "OverworldPal"), tiles)
     images.append(image)
     counts.append(n)
     free_codes = [free]
+    anims = [[]]                                    # (The overworld: none.)
     towns, everyone, starts = bytearray(), [], []
     town_plan = color_plan(rom, chr_rom, "TownPal")
     dungeon_plan = color_plan(rom, chr_rom, "DungeonPal")
     for town in maps.TOWNS:
         grid = maps.town_blocks(rom, town)
         _, size, border, _ = maps.map_info(rom, town["number"])
-        image, n, free = map_image(chr_rom, blocks, {b for row in grid for b in row} | {border},
-                                   dungeon_plan if town["number"] >= maps.DARK_FROM else town_plan,
-                                   tiles)
+        town_people = maps.people(rom, town)
+        if town["number"] not in PEOPLE_SPRITE_MAPS:
+            town_people = onto_floor(grid, town_people)
+        extra, looks = people_looks(chr_rom, town, grid, border, town_people,
+                                    sprite_table_of(rom), rom.table("RegSPPal", 12))
+        image, n, free, accepted, steps = map_image(chr_rom, blocks, {b for row in grid for b in row} | {border},
+                                             dungeon_plan if town["number"] >= maps.DARK_FROM else town_plan,
+                                             tiles, extra, wide=town["number"] < maps.DARK_FROM)
+        wanders = [p[5] for p in town_people]
+        town_people = people_into_blocks(grid, town_people, looks, accepted)
+        town_people = spread_sprites(grid, town_people, wanders)
+        if sum(1 for q in town_people if q[5] == 0) > 1:    # (The engine draws one: SpriteOne.)
+            sys.exit(f"convert: {town['name']} has more than one person not in its background")
         images.append(image)
         counts.append(n)
         free_codes.append(free)
+        anims.append(steps)
         page = bytearray([border] * 1024)
         for y, row in enumerate(grid):
             page[y * 32:y * 32 + len(row)] = bytes(row)
         towns += page
         starts.append(len(everyone))
-        everyone += maps.people(rom, town)
+        everyone += town_people
     starts.append(len(everyone))
 
     os.makedirs(out_dir, exist_ok=True)
+    # The townspeople's other step (GFX_BANK at GFX_ANIM): each map's
+    # address, then for each map its count, its characters' codes and their
+    # glyphs in the other step (LoadAnim copies them to RAM; AnimStep swaps).
+    anim = bytearray(2 * len(anims))
+    for m, steps in enumerate(anims):
+        at = GFX_ANIM + len(anim)
+        anim[2 * m:2 * m + 2] = bytes([at & 0xFF, at >> 8])
+        anim += bytes([len(steps)] + [code for code, _ in steps]) + b"".join(g for _, g in steps)
+    with open(os.path.join(out_dir, "anim.bin"), "wb") as f:
+        f.write(anim)
+    with open(os.path.join(out_dir, "setb.bin"), "wb") as f:    # Set B: code 0 blank, then every text tile.
+        f.write((bytes(8) + b"".join(hires_char(chr_rom, t) for t in tiles)).ljust(0x400, b"\0"))
     with open(os.path.join(out_dir, "textab.bin"), "wb") as f:  # TextA, TextB: copied to RAM.
         f.write(bytes(text_a + text_b))
     per_bank = IMAGES_PER_BANK
@@ -344,9 +638,10 @@ def write_all(rom_path, out_dir):
 
     sprite_pal = rom.table("RegSPPal", 12)
     sprite_table = rom.table("CharSpriteTbl", 1024)
-    hero, pm0, pm1 = hero_frames(chr_rom, sprite_table, sprite_pal[0:3])
-    with open(os.path.join(out_dir, "hero.bin"), "wb") as f:
-        f.write(hero)
+    hero, hero_colors = hero_frames(chr_rom, sprite_table, sprite_pal, HERO_OFFSET)
+    carry, carry_colors = hero_frames(chr_rom, sprite_table, sprite_pal, CARRY_OFFSET)
+    with open(os.path.join(out_dir, "hero.bin"), "wb") as f:    # GFX_HERO: 16 frames.
+        f.write(hero + carry)
     people_gfx, people_colors = people_frames(chr_rom, sprite_table, sprite_pal)
     with open(os.path.join(out_dir, "people.bin"), "wb") as f:
         f.write(people_gfx)
@@ -581,6 +876,7 @@ def write_all(rom_path, out_dir):
         f.write(";Generated by tools/native/convert.py.\n\n")
         f.write(f".alias NUM_BLOCKS       {len(blocks)}\n")
         f.write(f".alias NAME_SLOT        {name_slot}\n")
+        f.write(f".alias TEXT_END         {WIDE_CODE}  ;The first code past set A's text.\n")
         f.write(f".alias NUM_MAPS         {len(images)}\n")
         f.write(f".alias NUM_PEOPLE       {len(everyone)}\n")
         f.write(f".alias IMAGE_PAGES      {IMAGE_SIZE // 256}\n")
@@ -593,8 +889,8 @@ def write_all(rom_path, out_dir):
         f.write(";And each byte of a glyph with every lit pixel COLPF0 (for the name's\n")
         f.write(";letters in the monster's band's set).\n")
         f.write(f".alias TO_WHITE         ${0x8000 + to_white_at:04X}\n\n")
-        f.write(";COLPM0-1 for the hero, COLPM2-3's color for each townsperson graphic.\n")
-        f.write(asm_bytes("HeroColors", [pm0, pm1, pm0, CARRY_COLOR]))    # (Then carrying her.)
+        f.write(";COLPM0-2 for the hero, COLPM3's color for each townsperson graphic.\n")
+        f.write(asm_bytes("HeroColors", hero_colors + carry_colors))      # (Then carrying her.)
         f.write(";Where each text block starts, in the text bank.\n")
         f.write(";Each map (0 the overworld, then maps.TOWNS): its image's place in the\n")
         f.write(";images bank, size, the block off its edges, the overworld block that\n")

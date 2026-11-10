@@ -14,10 +14,9 @@
 ;the step after it seeing the choice in ListSel ($FF: none). The messages
 ;and the sums are the game's (Bank03's WeaponsDialog on).
 ;
-;Window text is drawn from set A, which holds only digits, capitals and
-;the frame: any other text tile (an item's lower case letters) is copied
-;from set B into a code the map's characters leave free (MapFreeCode on,
-;then 114-127) the first time it is needed on a map (TileA).
+;Window text is drawn from set A, which holds digits, capitals, the frame
+;and a little punctuation, each at a code of its own: lower case shows as
+;capitals (convert.py's TextA), so nothing is copied in as it is needed.
 
 .alias Equipped         $0253   ;Weapon, armor, shield (game state, saved
 .alias Keys             $0254   ;with it: NewGame sets them),
@@ -39,7 +38,6 @@
 .alias ListSel          $02CB   ;the cursor's (and the choice: $FF none),
 .alias ListKind         $02CC   ;0 prices, 1 counts (herbs, keys), 2 words.
 .alias AskRet           $02CD   ;Non-zero: the YES/NO answer ends the message list.
-.alias DynNext          $02CE   ;The next free code for TileA (0: none).
 .alias ListNext         $02CF   ;The step after the list.
 .alias ListItems        $02D0   ;10: the rows' items.
 .alias SleepTime        $02DA   ;The inn's night, in frames.
@@ -48,12 +46,7 @@
 .alias ShopTmpY         $02DD   ;
 .alias ShopTmpI         $02DE   ;
 .alias ShopTmpN         $02DF   ;
-.alias TileX            $02E0   ;TileA's.
-.alias TileY            $02E1   ;
 .alias NamePtr          $6A     ;2: an item's name.
-.alias TilePtr          $6C     ;2: TileA's glyph copying.
-.alias TileDst          $6E     ;2:
-.alias DynCodes         $3900   ;128: each text tile's code in set A (0: none yet).
 
 .alias LIST_ROW         2       ;The list window: at (10, 2), 22 wide.
 .alias LIST_COL         10      ;
@@ -72,94 +65,6 @@
 .alias WORD_SELL        $FD     ;
 .alias RETURN_X         42      ;Where the wings bring the hero: beside
 .alias RETURN_Y         43      ;Tantegel (the game's DoReturn).
-
-;--------------------------------------[Window text]-------------------------------------------------
-
-;A = set A's code for text tile A (X and Y kept): its own, or one given it
-;now (its glyph copied from set B), or, none being left, a capital's.
-TileA:
-        STX TileX            ;
-        TAX                     ;
-        LDA TextA,X             ;
-        BNE TileDone            ;
-        CPX #TL_BLANK           ;(A blank: 0.)
-        BEQ TileDone            ;
-        LDA DynCodes,X          ;
-        BNE TileDone            ;
-        LDA DynNext             ;
-        BEQ TileNone            ;
-        STA DynCodes,X          ;
-        STY TileY            ;
-        LDA TextB,X             ;Set B's glyph: CharsetB + code * 8.
-        LDY #$00                ;
-        STY TilePtr+1            ;
-        ASL                     ;
-        ROL TilePtr+1            ;
-        ASL                     ;
-        ROL TilePtr+1            ;
-        ASL                     ;
-        ROL TilePtr+1            ;
-        STA TilePtr              ;
-        LDA TilePtr+1            ;
-        CLC                     ;
-        ADC #>CharsetB          ;
-        STA TilePtr+1            ;
-        LDA DynNext             ;To CharsetA + code * 8.
-        STY TileDst+1            ;
-        ASL                     ;
-        ASL                     ;
-        ROL TileDst+1            ;
-        ASL                     ;
-        ROL TileDst+1            ;
-        STA TileDst              ;
-        LDA TileDst+1            ;
-        CLC                     ;
-        ADC #>CharsetA          ;
-        STA TileDst+1            ;
-        LDY #$07                ;
-*       LDA (TilePtr),Y          ;
-        STA (TileDst),Y          ;
-        DEY                     ;
-        BPL -                   ;
-        LDY TileY            ;
-        LDA DynNext             ;The next: after 63, 114; none after 127.
-        CLC                     ;
-        ADC #$01                ;
-        CMP #64                 ;
-        BNE +                   ;
-        LDA #114                ;
-*       CMP #128                ;
-        BNE +                   ;
-        LDA #$00                ;
-*       STA DynNext             ;
-        LDA DynCodes,X          ;
-TileDone:
-        LDX TileX            ;
-        RTS                     ;
-TileNone:
-        CPX #$24                ;Lower case: its capital.
-        BCS +                   ;
-        CPX #$0A                ;
-        BCC +                   ;
-        LDA TextA+$1A,X         ;
-        BNE TileDone            ;
-*       LDA TextA+TL_BLANK      ;
-        JMP TileDone            ;
-
-;A new map: no text tiles given codes.
-ResetTiles:
-        LDX MapId               ;
-        LDA MapFreeCode         ;
-        CMP #64                 ;
-        BCC +                   ;
-        LDA #114                ;
-*       STA DynNext             ;
-        LDA #$00                ;
-        LDX #$7F                ;
-*       STA DynCodes,X          ;
-        DEX                     ;
-        BPL -                   ;
-        RTS                     ;
 
 ;--------------------------------------[Goods]-------------------------------------------------------
 
@@ -318,8 +223,7 @@ ItemPrice:
 ;A = item A's price's low byte, X its high (in MSG_BANK; Y lost).
 PriceOf:
         TAY                     ;
-        LDA #MSG_BANK           ;
-        JSR SelectBank          ;
+        JSR SelectMsg           ;
         LDX ItemPriceHi,Y       ;
         LDA ItemPriceLo,Y       ;
         RTS                     ;
@@ -636,8 +540,7 @@ RunShopStep:
         LDA ShopStepHi,X        ;
         STA Ptr+1               ;
         BPL +                   ;A step in MSG_BANK ($8000 on: poweron.asm),
-        LDA #MSG_BANK           ;that bank in.
-        JSR SelectBank          ;
+        JSR SelectMsg           ;that bank in.
 *       JMP (Ptr)               ;
 
 ;$FFFB in a message list: the shop for control byte A.
@@ -764,7 +667,7 @@ StepStart:
         TAX                     ;
         LDA KeyCost,X           ;
         JSR SetPrice8           ;
-        LDA #$16                ;Magic keys! ... purchase one for 85 GOLD?
+        LDA #$16                ;The key seller's offer and price.
         LDX #K_ASKED            ;
         JMP ShopAsk             ;
 *       CMP #$11                ;
@@ -779,8 +682,8 @@ StepStart:
         TAX                     ;
         LDA InnCost,X           ;
         JSR SetPrice8           ;
-        LDA #$0B                ;The inn's greeting and its price, then
-        LDX #I_ASKED            ;board is 6 GOLD per night.
+        LDA #$0B                ;The inn's greeting and its price for
+        LDX #I_ASKED            ;the night.
         JMP ShopAsk             ;
 
 ;Price (and Amount) = A.
@@ -796,7 +699,7 @@ SetPrice8:
 StepWAsked:
         LDA Answer              ;
         BEQ +                   ;
-        LDA #$2F                ;Please, come again.
+        LDA #$2F                ;The shop's farewell.
         JMP ShopEnd             ;
 *       LDA #$2D                ;Which to buy?
         LDX #W_LIST             ;
@@ -807,7 +710,7 @@ StepWList:
 StepWPicked:
         JSR ChosenItem          ;
         BCC +                   ;
-        LDA #$2F                ;Please, come again.
+        LDA #$2F                ;The shop's farewell.
         JMP ShopEnd             ;
 *       STA SelItem             ;
         STA ItemName            ;
@@ -871,7 +774,7 @@ WOld:
         LDX #W_OKASK            ;
         JMP ShopSay             ;
 StepWOkAsk:
-        LDA #$27                ;Is that Okay?
+        LDA #$27                ;The shopkeeper checks the choice.
         LDX #W_OK               ;
         JMP ShopAsk             ;
 StepWOk:
@@ -925,8 +828,7 @@ StepWMore:
 OpenShopList:
         TXA                     ;
         PHA                     ;
-        LDA #MSG_BANK           ;(The shops' tables' bank.)
-        JSR SelectBank          ;
+        JSR SelectMsg           ;(The shops' tables' bank.)
         LDX ShopIdx             ;
         LDA ShopStart,X         ;
         TAX                     ;
@@ -1039,7 +941,7 @@ StepTSPick:
         LDA PriceLo             ;
         ORA PriceHi             ;
         BNE +                   ;
-        LDA #$1B                ;I cannot buy it.
+        LDA #$1B                ;The shop will not buy it.
         LDX #T_SMORE            ;
         JMP ShopSay             ;
 *       LDA #$1C                ;The price offered for it, and the ask
@@ -1130,7 +1032,7 @@ StepIAsked:
         LDA #$22                ;Not enough gold.
         JMP ShopEnd             ;
 *       JSR PayPrice            ;
-        LDA #$09                ;Good night.
+        LDA #$09                ;The inn's good night.
         LDX #I_SLEEP            ;
         JMP ShopSay             ;
 StepISleep:
@@ -1194,7 +1096,7 @@ StepItPick:
         BNE +                   ;
         DEC Herbs               ;
         JSR HerbHeal            ;
-        LDA #$F7                ;Loto used the Herb.
+        LDA #$F7                ;The herb used: said.
         LDX #$00                ;
         JMP ShopOpen            ;
 *       CMP #KEY_ITEM           ;A key: as DOOR.
