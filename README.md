@@ -60,17 +60,17 @@ native engine passed it. Commit c51bc31 is the last that has it.
 
 The game's rules, sums, maps, text and music are the NES's. What had to
 change comes from the 5200's hardware, and each change was the least that
-made it fit. Everything here has been tested in the atari800 emulator
-only, not yet on a real 5200.
+made it fit. It is tested in the atari800 emulator and on a SuperStation
+One (an FPGA 5200) on a CRT television; not yet on an original 5200.
 
 | The 5200's limit | What the port does about it |
 |---|---|
 | **160 colour pixels across**, not 256 (colour text mode: 4 wide pixels a character) | Every map tile, monster and figure is squeezed to half its width at build time, keeping thin lines (outlines, mortar) over the fill around them. |
 | **5 colours a screen row** (4, and a fifth chosen per character), not 4 palettes of 3 | Each map gets a colour plan made from its NES palette. A monster's rows get their own colours, so the map beside the battle window is shown in the nearest of those. Some NES colours share one. |
 | **4 one-colour sprites**, not 64 | See the townspeople, below. The hero has three of them, for his own three colours. Monsters are drawn in the background, not as sprites. |
-| **128 characters a set** for map and window text together | Window text is in capitals (below). A town's graphics are capped at 76 characters. A monster has 63 at most: its least used shapes take the nearest other's. |
+| **128 characters a set** for map and window text together | Window text is in capitals (below). A town's graphics are capped at 76 characters. A monster gets 63 a set, and the biggest two sets, split by rows. |
 | **No battery memory** | The King gives a 20-character password, not a saved game (the start menu's NEW GAME and CONTINUE are the port's own). It keeps experience, gold, items, equipment and the quest's progress, not the name: that is asked for again. |
-| **4 sound channels, 8-bit pitch on most** | The first voice has exact pitch (two channels joined). The second and the bass are 8-bit, a little off in the top octaves. The square waves' tone settings (duty) are not kept. Sound effects share the second voice's channel. |
+| **4 sound channels, 8-bit pitch on most** | The first voice has exact pitch (two channels joined). The second and the bass are 8-bit: 15 of the 44 notes the second voice plays are 10 to 24 cents off. The square waves' tone settings (duty) and the wings' pitch sweep are not kept. Sound effects share the second voice's channel; the music plays a quarter softer than the NES's, and at half while an effect sounds, so the effects are heard. |
 
 ### The townspeople
 
@@ -102,6 +102,11 @@ spare for them, the port draws the people into each town's map instead:
 
 ### Battles and figures
 
+- Monsters fade in and out (in dark places) or build up row by row (on
+  the overworld), and the overworld's sea sways; in the sound, the lead's
+  long notes have a vibrato, and the fire and the hits have POKEY's own
+  noise textures: the port's own touches.
+
 - The battle scene is the NES's, in a window on the map; in caves the
   monster stands on black, with no scene.
 - The Dragonlord's true form is on a black screen, as on the NES, in four
@@ -123,7 +128,31 @@ do a command at once (the port's own shortcut).
 - The cartridge is a 512KB SuperCart (atari800 type 74), larger than any
   cartridge sold for the 5200.
 
+## How the port uses the 5200's own hardware
+
+Where the 5200 can do something the NES cannot, the port uses it, both to
+fit the game and as touches of its own:
+
+| The 5200's feature | What it does here |
+|---|---|
+| **Display list, a mode per row** | The dialog window's rows switch to high-resolution text (ANTIC mode 2) while it is up, so the game's letters show at their full 8 pixels, lower case and all; the rest of the screen stays in colour. |
+| **Display list interrupts** (code that runs at chosen screen rows) | A battle's screen is three or four bands, each with its own character set and colours: the scene, the monster (two sets for the biggest), and the dialog. The townsperson sprite is repositioned row by row. |
+| **Colour registers changed on the fly** | Monsters fade in from black and out to it in dark places; the end credits fade in and out; the screen flashes grey when the rainbow drop is made. |
+| **Character sets in RAM** | Townspeople are drawn into the towns' own graphics, standing and stepping in place by swapping two characters' pictures; the overworld's sea sways the same way; on the overworld a monster builds up and goes row by row. |
+| **Multicolour players** (sprites whose overlap makes a third colour) | The hero is three sprites, in his own colours, with the game's frames of him carrying the princess. |
+| **Fine scrolling** | The view scrolls a line or a colour clock at a time, at the NES's 16 frames a step. |
+| **POKEY's 16-bit channels** | The lead voice has exact pitch, and a vibrato on its long notes. |
+| **POKEY's noise textures** | The dragon's fire crackles; hits and the force field buzz. |
+| **POKEY's channels at chosen volumes** | The music is mixed a little softer, and dips under the sound effects so they are heard. |
+| **The keypad** | Start, Pause, and keys 1-8 for commands at once. |
+| **SuperCart bank switching** (512KB) | The program is in every bank, the data in the switched half; rarely used code (title, passwords, credits) runs from a data bank. |
+
 ## The native engine
+
+This section is the project's log, oldest first: where a later entry
+changes something, it replaces what an earlier one says (marked *Now:*
+where it matters). For how things stand, see the section above and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 A second codebase, written for the 5200 from the ground up rather than run
 on a software NES. You present your own Dragon Warrior ROM; the build reads
@@ -150,7 +179,8 @@ where its data sits:
   overworld), the color registers, which blocks are walls, and the hero's 8
   frames as two players. Where the players overlap GTIA's multicolor mode
   shows their colors ORed, and the converter picks the pair of Atari colors
-  that best gives the sprite's three.
+  that best gives the sprite's three. *Now:* three players, his own three
+  colors exact, and 8 more frames carrying the princess.
 - `native/main.asm`: the screen is a ring of 32 rows of 128 bytes, each
   block column written twice so ANTIC's 40-byte fetch for a scrolled row
   never runs off its end. Each display list row points into the ring, and
@@ -173,7 +203,9 @@ where its data sits:
   slots that get the name's letters, and is in RAM for them. The dialog
   window's rows show a second set with every text tile, switched in by a
   display list interrupt at its top; it takes the whole width of its rows
-  (the NES leaves 4 columns of map at each side).
+  (the NES leaves 4 columns of map at each side). *Now:* those rows are
+  high-resolution (ANTIC mode 2) while the window is up, the game's letters
+  at full width, and the second set is one for every map.
 - `tools/native/build.py ROM OUTDIR [--autopilot | --script NAME]` (ROM:
   your `.nes` file, or a directory of its split banks)
   builds a 512KB SuperCart (atari800 type 74): the program in the first half
@@ -193,7 +225,8 @@ the windows.
   overworld by the game's map entrance table and left by walking off their
   edge. Each map has its own pair of character sets (its colors change the
   text's too) and block tables: a 2.25KB image in a data bank, copied to RAM
-  when the hero enters, with the screen off meanwhile.
+  when the hero enters, with the screen off meanwhile. *Now:* 1.25KB, its
+  own set and tables; the dialog's set is shared.
 - Townspeople (`native/people.asm`): from the game's tables of mobile and
   still people, each in one player in its graphic's color. Players 2 and 3
   are moved and recolored by a display list interrupt at the end of each
@@ -204,7 +237,9 @@ the windows.
   the game has them say for a hero at the start (their dialog control
   byte, as TALK's dispatch reads it; shops and the inn only greet so far).
   People are only drawn again when something about them changed, and the
-  interrupts only run on maps with people.
+  interrupts only run on maps with people. *Now:* no one wanders or turns;
+  nearly all are drawn into the map, facing down and stepping in place, and
+  the few left are in player 3.
 
 - The throne room, up the stairs from Tantegel's ground floor (STAIRS, on
   the stairs block, follows the game's stairs link either way), its chests
@@ -320,10 +355,14 @@ walking through Brecconary's streets among its people.
     back beside Tantegel; the dragon's scale is put on; the torch and
     fairy water give their messages (fairy water's monster-repelling is
     not done yet). In a battle, ITEM uses an herb if there is one (no item
-    window there yet).
+    window there yet). *Now:* fairy water keeps the weaker monsters away
+    for its steps, as the game's does, and a battle's ITEM opens a list of
+    the goods.
   - Window text uses set A, which holds only digits, capitals and the
     frame. Any other letter is copied from set B into a character code the
     map leaves free, the first time a window needs it on that map.
+    *Now:* window text is all capitals, from fixed codes; nothing is
+    copied in.
   - Tests: `shopweapon` buys a Club, `shoptool` buys an herb and uses it,
     `inn` stays a night, `keys` buys a magic key. A script's `;GOLD: N`
     line (`build.py --gold N`) gives the hero gold to start with.
@@ -626,7 +665,7 @@ band's colors, so water there can show grey or brown.
   its people (the townsperson figure the game gives her there), loaded
   only with ModFlags' returned bit (LoadPeople). Carrying her, the hero
   is drawn in a second color pair (the VBI's HeroColors+2: his body
-  rose), no new figure. The King's password window and its encoding now
+  rose), no new figure. *Now:* he has the game's frames carrying her. The King's password window and its encoding now
   run from the messages bank too, for room. Test: `princesshome`.
 - The start menu: after the title, a blank screen with NEW GAME and
   CONTINUE (the port's own words; the stick, then the lower button or
@@ -669,7 +708,46 @@ band's colors, so water there can show grey or brown.
   princess, the staff of rain's old man and the Dragonlord's floor keep
   sprites (they come and go). More color, no flicker for those drawn in
   the background, and in Brecconary the main loop takes 4,950 cycles a
-  frame on average (it was 11,400).
+  frame on average (it was 11,400). *Now:* all but five are, below.
+- Atari touches, things the NES does not do:
+  - The overworld's sea sways: its open water's two characters swap with
+    a copy whose waves sit a pixel to the right (convert.py's ripple),
+    every 16 frames, through the townspeople's stepping (anim.bin's map
+    0; AnimStep). Its blue is the towns', caves' and mountains' too, so a
+    color cycle would have made them pulse; this moves the waves only.
+  - The lead voice's long notes have a vibrato: after 20 frames, its
+    16-bit divider moves up to twice its high byte up and down (about 14
+    cents), a cycle each 16 frames (ToPokey, VibAge, VibMul).
+  - Some effects' noise has POKEY's own textures (sound.py's NOISE_DIST,
+    in the sound bank): the dragon's fire crackles (17-bit noise through
+    the 5-bit), the hits and the force field buzz (the 4-bit); the rest
+    keep the NES's white noise.
+  - Monsters come and go: off the overworld, where the map round the
+    battle window is black, the monster's colors fade in from black and
+    out to it (MonFade, MonsterShade in the VBI: BattleDLI2 shows
+    MonShow); on the overworld, whose scene shares the monster's
+    colors, its rows show or go one by one, every other first, a row a
+    frame (MonsterComes, EraseMonster, MonsterWipe).
+- The music softer, and lower under the sound effects: tried on a
+  SuperStation One, the music drowned the effects (POKEY's channels add
+  up as they are; the NES's mix softens a loud one). ToPokey now plays
+  the music's channels through MusicVol, a quarter softer, and at half
+  while an effect sounds; the effect's tone or noise keeps its own
+  loudness. (The second voice's tuning was measured too: it plays above
+  the first only 73 times in all the music, so giving the 16-bit pair to
+  the higher voice would not help; its 8-bit notes stay.)
+- The biggest monsters keep their shapes: seven need more than a set's
+  63 glyphs on the scene (up to 87), and their least used ones took the
+  nearest other's. Their rows from MonSplit now have a second set
+  (Lower2Set, $3400), in the same colors: battle.py's monster picks the
+  row that leaves the fuller of the two sets the fewest (46 at most),
+  numbers each set's glyphs apart, and the record says the split and the
+  second count; a fourth display list interrupt (BattleDLI2b) switches
+  the set. For the room the map beside the window is recolored a byte at
+  a time as each of its characters is copied (MapByte), not through two
+  256-byte tables, and the remap table and the grid moved ($2A00,
+  $3900). The caves' monsters on black all fit one set. Test:
+  `bigmonster`.
 - Less work for the people: no one wanders, so MovePeople and each
   person's step and offsets are gone; and a map has one person at most
   not drawn in its background (the build stops otherwise), found when
@@ -734,7 +812,8 @@ band's colors, so water there can show grey or brown.
   set. His colors and hers are four, the two multicolor players show
   three, so her white and skin share their overlap: brown hair, violet
   armor, lavender white (the overlap kept a shade of one of the pair, not
-  a hue of its own). Test: `rescue`.
+  a hue of its own). Test: `rescue`. *Now:* three players (below): his
+  blue kept, her white and pink, her hair dark red; no RAM copy.
 - Nearly every townsperson in the background: everyone faces down,
   always (no one turns to the hero on TALK), so a figure needs one look,
   not four. Those who wandered in the game are set down on their town's

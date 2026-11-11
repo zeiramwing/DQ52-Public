@@ -479,7 +479,26 @@ def char_code(i):
     return i if i < TEXT_BASE_CODE else WIDE_CODE + i - TEXT_BASE_CODE
 
 
-def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False):
+OPEN_WATER = WATER_BLOCKS[0]    # The open sea's block (its characters A B / B A).
+
+
+def ripple(a, b):
+    """The open sea's two characters with their waves a pixel to the right
+    (each row of A B, and of B A, as one row of 8 that wraps round)."""
+    def px(g, y):
+        return [g[y] >> (6 - 2 * x) & 3 for x in range(4)]
+
+    def pack(row):
+        return row[0] << 6 | row[1] << 4 | row[2] << 2 | row[3]
+    out_a, out_b = bytearray(), bytearray()
+    for y in range(8):
+        pa, pb = px(a, y), px(b, y)
+        out_a.append(pack([pb[3]] + pa[:3]))
+        out_b.append(pack([pa[3]] + pb[:3]))
+    return bytes(out_a), bytes(out_b)
+
+
+def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False, sea=False):
     """A map's 2.25KB image, copied to RAM ($2000) when the hero enters:
     set A (its blocks' characters, then the window text at TEXT_BASE_CODE
     and the name slots), set B (every text tile), and a page of tables:
@@ -513,6 +532,9 @@ def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False):
     # (then it stands still). The engine swaps them every 16 frames.
     steps = [(char_code(i), next(iter(d))) for i, d in sorted(second.items())
              if i >= len(block_only) and len(d) == 1 and next(iter(d)) != chars[i]]
+    if sea and OPEN_WATER in codes:     # The overworld: its sea's waves sway.
+        a, b = (codes[OPEN_WATER][k] & 0x7F for k in (0, 1))
+        steps += list(zip((a, b), ripple(chars[a], chars[b])))
     if len(steps) > ANIM_MAX:
         sys.exit(f"convert: {len(steps)} characters of townspeople to animate, more than {ANIM_MAX}")
     free = char_code(len(chars))        # The first code no map character uses.
@@ -561,12 +583,12 @@ def write_all(rom_path, out_dir):
 
     world = world_blocks(world_types(rom))
     images, counts = [], []
-    image, n, free, _, _ = map_image(chr_rom, blocks, {b for row in world for b in row},
-                               color_plan(rom, chr_rom, "OverworldPal"), tiles)
+    image, n, free, _, sea = map_image(chr_rom, blocks, {b for row in world for b in row},
+                                       color_plan(rom, chr_rom, "OverworldPal"), tiles, sea=True)
     images.append(image)
     counts.append(n)
     free_codes = [free]
-    anims = [[]]                                    # (The overworld: none.)
+    anims = [sea]                                   # (The overworld: its sea's.)
     towns, everyone, starts = bytearray(), [], []
     town_plan = color_plan(rom, chr_rom, "TownPal")
     dungeon_plan = color_plan(rom, chr_rom, "DungeonPal")
@@ -749,8 +771,11 @@ def write_all(rom_path, out_dir):
     sq1, sq2, tri, noise = sound.tables(rom)
     div_at = sound_tables_at + len(sound_tables)
     dividers = bytes([v & 0xFF for v in sq1] + [v >> 8 for v in sq1] + sq2 + tri + noise)
+    # Then each effect's noise texture (sound.py's NOISE_DIST: AUDC's
+    # distortion bits; the port's own).
+    noise_dist_at = div_at + len(dividers)
     with open(os.path.join(out_dir, "sound.bin"), "wb") as f:
-        f.write(sound_data + sound_tables + dividers)
+        f.write(sound_data + sound_tables + dividers + bytes(sound.NOISE_DIST))
     with open(os.path.join(out_dir, "peopledata.bin"), "wb") as f:
         f.write(bytes(p[k] for k in range(6) for p in everyone) or bytes(6))
     # The text bank: the text, then the enemies' and the items' names (read
@@ -997,6 +1022,7 @@ def write_all(rom_path, out_dir):
         for k, label in enumerate(("Sq1DivLo", "Sq1DivHi", "Sq2Div", "TriDiv")):
             f.write(f".alias {label:16s} ${div_at + k * n:04X}\n")
         f.write(f".alias NoiseDiv         ${div_at + 4 * n:04X}\n")
+        f.write(f".alias NoiseDist        ${noise_dist_at:04X}\n")
         resume = sound.resume_music(rom)
         f.write(";Each map's music (the game's ResumeMusicTbl, by its map number).\n")
     return counts, len(tiles) + 1, len(text)

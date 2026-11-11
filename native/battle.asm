@@ -21,12 +21,11 @@
 ;taken once a message is out, with the game's sums for who goes first,
 ;hitting, damage, running and leveling up.
 
-.alias UpperSet         $2C00   ;The bands' character sets (RAM).
-.alias LowerSet         $3000   ;
-.alias ByteMap0         $3400   ;A map character's byte in the lower band's
-.alias ByteMap1         $3500   ;colors: without bit 7, with it.
-.alias RemapTbl         $3600   ;Each map character's code in the band ($FF: none yet).
-.alias WithGrid         $3700   ;The lower band's codes, 14 a row: with the monster,
+.alias UpperSet         $2C00   ;The bands' character sets (RAM): the scene's,
+.alias LowerSet         $3000   ;the monster's,
+.alias Lower2Set        $3400   ;and its rows from MonSplit, if they need one.
+.alias RemapTbl         $2A00   ;Each map character's code in the band ($FF: none yet).
+.alias WithGrid         $3900   ;The lower band's codes, 14 a row: with the monster,
 .alias WithoutGrid      $3800   ;and once it is gone.
 .alias SceneGrid        $3A00   ;The upper band's codes, 14 by 12.
 .alias SCENE_SHOWN      12      ;
@@ -51,6 +50,15 @@
 .alias InLower          $02B2   ;Non-zero: composing the lower band.
 .alias MonGone          $02B3   ;Non-zero: the monster is gone.
 .alias CmdBuf           $02B4   ;8: rows 6-7, columns 24-27 (under the command window).
+.alias MonSplit         $02BC   ;The row its second set starts at (0: none),
+.alias MonGlyphs2       $02BD   ;that set's glyph count,
+.alias SplitDLI         $02BE   ;and the row before (its interrupt's).
+.alias MapSrc           $02BF   ;MapByte's.
+.alias MonFade          $07C8   ;The monster's colors less this luminance (16 on: black),
+.alias MonFadeTo        $07C9   ;and where the VBI takes it, a step a frame;
+.alias MonShow          $07CA   ;3: its COLPF1-3 as shown (BattleDLI2's).
+.alias WipeLeft         $07CD   ;Rows left of the monster's coming or going,
+.alias WipeShow         $07CE   ;and which: 0 coming (the grid with it), 1 going.
 .alias SrcPtr           $DB     ;2: glyph copying (GfxPtr: no people on the overworld).
 
 .alias BState           $F3     ;What to do once the message is out.
@@ -392,6 +400,7 @@ StartBattle:
         LDA #MSC_END_BOSS       ;
 *       JSR PlayMusic           ;
         JSR LoadMonster         ;
+        JSR MonsterComes        ;
         JSR ComposeScene        ;
         JSR DLIBits             ;
         LDA #$00                ;
@@ -417,8 +426,8 @@ StartBattle:
 ;bytes into MonHead, its grids into WithGrid and WithoutGrid, its glyphs
 ;into LowerSet from code 1; the white text from code 64 and the name's
 ;letters (set A's name slots) made white. UpperSet: the scene's glyphs from
-;code 1, set A's text from code 64. And ByteMap0-1 for the map's
-;characters in the lower band.
+;code 1, set A's text from code 64. A monster too big for one set
+;(more than 63 glyphs) has its rows from MonSplit in Lower2Set.
 LoadMonster:
         LDA MapId               ;A cave's battle: the monster on black (no
         BEQ +                   ;scene there), MonsterDark's.
@@ -445,6 +454,15 @@ LoadHead:
         STA MonHead,Y           ;
         DEY                     ;
         BPL -                   ;
+        LDY #15                 ;
+        LDA (SrcPtr),Y          ;
+        STA MonSplit            ;
+        TAX                     ;
+        DEX                     ;
+        STX SplitDLI            ;(At no row when there is no split: $FF.)
+        INY                     ;
+        LDA (SrcPtr),Y          ;
+        STA MonGlyphs2          ;
         LDA #$00                ;
         STA MonGone             ;
         LDX MonTop              ;
@@ -455,7 +473,7 @@ LoadHead:
         SBC MonTop              ;
         JSR Times14             ;
         STA GridSize            ;
-        LDA #15                 ;
+        LDA #17                 ;
         JSR SrcAdd              ;
         LDY #$00                ;
 *       LDA (SrcPtr),Y          ;
@@ -484,6 +502,16 @@ LoadHead:
 *       JSR CopyGlyphs          ;
         TYA                     ;
         JSR SrcAdd              ;
+        LDX MonGlyphs2          ;Its second set's (rows from MonSplit).
+        BEQ +                   ;
+        LDA #<[Lower2Set+8]     ;
+        STA DstPtr              ;
+        LDA #>[Lower2Set+8]     ;
+        STA DstPtr+1            ;
+        JSR CopyGlyphs          ;
+        TYA                     ;
+        JSR SrcAdd              ;
+*
         LDA #MONSTER_BANK+1     ;UpperSet's, from the second monster bank
         JSR SelectBank          ;(with the battle text); none in a cave,
         LDA MapId               ;whose map's copy is there (TownMap).
@@ -521,19 +549,23 @@ LowerText:
         LDX #$07                ;LowerSet's code 0 blank, its text from code
         LDA #$00                ;64 BattleText (400 bytes).
 *       STA LowerSet,X          ;
+        STA Lower2Set,X         ;(And the second set's, the same.)
         DEX                     ;
         BPL -                   ;
         LDX #$00                ;
 *       LDA BATTLE_TEXT,X       ;
         STA LowerSet+$200,X     ;
+        STA Lower2Set+$200,X    ;
         LDA BATTLE_TEXT+$100,X  ;
         STA LowerSet+$300,X     ;
+        STA Lower2Set+$300,X    ;
         INX                     ;
         BNE -                   ;
         LDX #31                 ;The name slots: set A's, made white.
 *       LDY CharsetA+NAME_SLOT*8,X ;
         LDA TO_WHITE,Y          ;(In the second monster bank.)
         STA LowerSet+NAME_SLOT*8,X ;
+        STA Lower2Set+NAME_SLOT*8,X ;
         DEX                     ;
         BPL -                   ;
         LDA MonGlyphs           ;Glyphs past 63 (his second form's, only
@@ -553,38 +585,31 @@ LowerText:
         TAX                     ;
         JSR CopyGlyphs          ;
 MonGlyphsIn:
-                                ;ByteMap0-1: each byte's 4 pixels through
-        LDA #$00                ;MonVals (without bit 7, with it).
-        STA Count               ;
+        RTS                     ;
+
+;A = glyph byte A's 4 pixels in the monster's colors (MonVals, + X: 0 for
+;a map character without bit 7, 4 with it). Y kept.
 MapByte:
-        LDA Count               ;
-        STA Tmp                 ;
-        LDY #$04                ;
-*       LDA #$00                ;The next pixel's value.
-        ASL Tmp                 ;
+        STA MapSrc              ;
+        STX Tmp3                ;
+        LDA #$04                ;
+        STA Lead                ;
+MapPixel:
+        LDA #$00                ;The next pixel's value.
+        ASL MapSrc              ;
         ROL                     ;
-        ASL Tmp                 ;
+        ASL MapSrc              ;
         ROL                     ;
+        CLC                     ;
+        ADC Tmp3                ;
         TAX                     ;
         ASL Tmp2                ;
         ASL Tmp2                ;
         LDA Tmp2                ;
         ORA MonVals,X           ;
         STA Tmp2                ;
-        ASL Tmp3                ;
-        ASL Tmp3                ;
-        LDA Tmp3                ;
-        ORA MonVals+4,X         ;
-        STA Tmp3                ;
-        DEY                     ;
-        BNE -                   ;
-        LDX Count               ;
-        LDA Tmp2                ;
-        STA ByteMap0,X          ;
-        LDA Tmp3                ;
-        STA ByteMap1,X          ;
-        INC Count               ;
-        BNE MapByte             ;
+        DEC Lead                ;
+        BNE MapPixel            ;
         RTS                     ;
 
 ;SrcPtr += A.
@@ -652,6 +677,16 @@ ComposeRow:
         BNE +                   ;
         INC InLower             ;The lower band from here.
         LDA MonGlyphs           ;
+        CLC                     ;
+        ADC #$01                ;
+        JSR NewBand             ;
+*       LDA MonSplit            ;Its second set's, from the split.
+        BEQ +                   ;
+        CMP WinRow              ;
+        BNE +                   ;
+        LDA #$02                ;
+        STA InLower             ;
+        LDA MonGlyphs2          ;
         CLC                     ;
         ADC #$01                ;
         JSR NewBand             ;
@@ -752,6 +787,9 @@ SceneUpper:
 *       LDA WithoutGrid,X       ;
         RTS                     ;
 
+;Each band's set's page: the scene's, the monster's, its second.
+BandSet:        .byte >UpperSet, >LowerSet, >Lower2Set
+
 ;A = the band's code for the screen's character A: text as it is; a map
 ;character the code given it, or the next free one, its glyph copied from
 ;set A (in the lower band, through ByteMap0-1); 0 (blank) once none are
@@ -793,10 +831,8 @@ RemapChar:
         ASL                     ;
         ROL DstPtr+1            ;
         STA DstPtr              ;
-        LDA #>UpperSet          ;
         LDX InLower             ;
-        BEQ RemapUpper          ;
-        LDA #>LowerSet          ;
+        LDA BandSet,X           ;
 RemapUpper:
         CLC                     ;
         ADC DstPtr+1            ;
@@ -812,23 +848,21 @@ RemapUpper:
         AND #$80                ;
         JMP RemapDone           ;
 RemapLower:
-        LDA Tmp                 ;
-        BMI RemapLower1         ;
-*       LDA (SrcPtr),Y          ;
-        TAX                     ;
-        LDA ByteMap0,X          ;
-        STA (DstPtr),Y          ;
-        DEY                     ;
-        BPL -                   ;
-        LDA MonInv              ;
-        JMP RemapDone           ;
-RemapLower1:
+        LDX #$00                ;Through the monster's colors: without bit
+        LDA Tmp                 ;7, or with it.
+        BPL +                   ;
+        LDX #$04                ;
+*       STX Tmp3                ;(MapByte keeps it.)
+RemapLowerByte:
         LDA (SrcPtr),Y          ;
-        TAX                     ;
-        LDA ByteMap1,X          ;
+        LDX Tmp3                ;
+        JSR MapByte             ;
         STA (DstPtr),Y          ;
         DEY                     ;
-        BPL RemapLower1         ;
+        BPL RemapLowerByte      ;
+        LDA MonInv              ;
+        LDX Tmp3                ;
+        BEQ RemapDone           ;
         LDA MonInv+1            ;
 RemapDone:
         ORA Count               ;
@@ -848,25 +882,80 @@ RemapDone:
 RemapHave:
         RTS                     ;
 
-;The monster is gone: the lower band's window cells without it.
+;The monster comes, and goes (the 5200's own touch: the NES's just shows
+;or hides it). Off the overworld, where the map round the window is
+;black, its colors fade in or out (MonFade, the VBI's); on the overworld,
+;whose scene shares its colors, its rows show or go one by one, every
+;other first (WipeOrder), a row a frame (MonsterWipe, each battle frame).
+MonsterComes:
+        LDX MapId               ;
+        BEQ MonsterComesRows    ;
+        LDA #16                 ;Black, then to its colors.
+        STA MonFade             ;
+        LDA #$00                ;
+        STA MonFadeTo           ;
+        RTS                     ;
+MonsterComesRows:
+        STX MonFade             ;
+        STX MonFadeTo           ;
+        STX WipeShow            ;
+        INX                     ;The scene without it first.
+        STX MonGone             ;
+        LDA #12                 ;
+        STA WipeLeft            ;
+        RTS                     ;
+
+;The monster is gone.
 EraseMonster:
         LDA #$01                ;
-        STA MonGone             ;
-        LDA MonTop              ;
+        STA MonGone             ;(The grid without it from now: SceneCell.)
+        LDX MapId               ;
+        BEQ EraseRows           ;
+        LDA #16                 ;
+        STA MonFadeTo           ;
+        RTS                     ;
+EraseRows:
+        STA WipeShow            ;
+        LDA #12                 ;
+        STA WipeLeft            ;
+        RTS                     ;
+
+;A battle frame: the next row of the monster's coming or going, if any.
+MonsterWipe:
+        LDX WipeLeft            ;
+        BNE +                   ;
+        RTS                     ;
+*       DEX                     ;
+        STX WipeLeft            ;
+        LDA WipeOrder,X         ;
+        CLC                     ;
+        ADC MonTop              ;
+        CMP #SCENE_END          ;
+        BCS WipeState           ;(A row past the scene's: none.)
         STA WinRow              ;
-*       LDA #SCENE_COL          ;
+        LDA WipeShow            ;Its row from the grid wanted.
+        STA MonGone             ;
+        LDA #SCENE_COL          ;
         STA WinCol              ;
-*       JSR SceneCell           ;
+WipeCell:
+        JSR SceneCell           ;
         JSR PutChar             ;
         INC WinCol              ;
         LDA WinCol              ;
         CMP #SCENE_COL+14       ;
-        BNE -                   ;
-        INC WinRow              ;
-        LDA WinRow              ;
-        CMP #SCENE_END          ;
-        BNE --                  ;
+        BNE WipeCell            ;
+WipeState:
+        LDA WipeShow            ;Going: the grid without it. Coming: without
+        BNE WipeSet             ;it until all its rows are shown, then with.
+        LDA WipeLeft            ;
+        BEQ WipeSet             ;
+        LDA #$01                ;
+WipeSet:
+        STA MonGone             ;
         RTS                     ;
+;The rows from the monster's top in the order they come or go (read from
+;the last): every other one first.
+WipeOrder:      .byte 11, 9, 7, 5, 3, 1, 10, 8, 6, 4, 2, 0
 
 ;EnemyRec = enemy A's record (ENEMY_RECS, in MSG_BANK). A kept.
 LoadEnemy:
@@ -930,6 +1019,7 @@ SayHi:
 ;A frame of a battle: the command window, or the dialog, and once its
 ;message is out, the next step.
 BattleFrame:
+        JSR MonsterWipe         ;
         LDA ListOn              ;The spells' list window.
         BEQ +                   ;
         JMP ListFrame           ;

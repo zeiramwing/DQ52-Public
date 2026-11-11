@@ -811,7 +811,8 @@ WinRight:       .byte 9, 27, 31, 26, 31, STATUS_LEFT+STATUS_WIDTH-1
 ;first; each the next), each quick to its wait for the line's end, for
 ;the next row to show its set from its first line:
 ;the end of row 5, the scene's upper band's set; the row before the
-;monster's top, the lower band's set and colors; row 17, the map's colors
+;monster's top, the lower band's set and colors; the row before MonSplit,
+;if the monster has a second set, that set; row 17, the map's colors
 ;again and the text set.
 BattleDLI1:
         PHA                     ;
@@ -829,16 +830,30 @@ BattleDLI2:
         LDA #>LowerSet          ;
         STA WSYNC               ;
         STA CHBASE              ;
-        LDA MonColors           ;
+        LDA MonShow             ;(MonColors, faded: MonsterShade.)
         STA COLPF1              ;
-        LDA MonColors+1         ;
+        LDA MonShow+1           ;
         STA COLPF2              ;
-        LDA MonColors+2         ;
+        LDA MonShow+2           ;
         STA COLPF3              ;
         LDA #WHITE              ;
         STA COLPF0              ;
         LDA #$00                ;
         STA COLBK               ;
+        LDA MonSplit            ;Next: the monster's second set, if it has
+        BEQ BattleNext3         ;one, else the dialog's.
+        LDA #<BattleDLI2b       ;
+        STA VDSLST              ;
+        LDA #>BattleDLI2b       ;
+        STA VDSLST+1            ;
+        PLA                     ;
+        RTI                     ;
+BattleDLI2b:
+        PHA                     ;
+        LDA #>Lower2Set         ;
+        STA WSYNC               ;
+        STA CHBASE              ;
+BattleNext3:
         LDA #<BattleDLI3        ;
         STA VDSLST              ;
         LDA #>BattleDLI3        ;

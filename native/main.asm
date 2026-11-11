@@ -1453,6 +1453,40 @@ DListRow:
         STA DList+2,X           ;
         JMP SetAddresses        ;
 
+;In a battle: MonFade a step toward MonFadeTo, and the monster's colors
+;as shown (MonShow) from MonColors, less MonFade's luminance (none left:
+;black).
+MonsterShade:
+        LDA BattleOn            ;
+        BEQ ShadeDone           ;
+        LDA MonFade             ;
+        CMP MonFadeTo           ;
+        BEQ ShadeColors         ;
+        BCC +                   ;
+        DEC MonFade             ;
+        BCS ShadeColors         ;
+*       INC MonFade             ;
+ShadeColors:
+        LDX #$02                ;
+ShadeOne:
+        LDA MonColors,X         ;
+        AND #$0F                ;
+        SEC                     ;
+        SBC MonFade             ;
+        BCS +                   ;
+        LDA #$00                ;(None left: black.)
+        BEQ ShadeSet            ;
+*       STA VbiTmp              ;
+        LDA MonColors,X         ;
+        AND #$F0                ;
+        ORA VbiTmp              ;
+ShadeSet:
+        STA MonShow,X           ;
+        DEX                     ;
+        BPL ShadeOne            ;
+ShadeDone:
+        RTS                     ;
+
 ;The dialog window's rows (DLG_FIRST on) in ANTIC mode 2 while it is up,
 ;its text at the NES's full 8 pixels (set B, white on black: the DLI's);
 ;else mode 4. Not on the title, which has its own rows. (Each row's
@@ -1510,6 +1544,8 @@ DLIBitRow:
         BEQ DLIOn               ;
 *
         CPY LowerDLI            ;
+        BEQ DLIOn               ;
+        CPY SplitDLI            ;
         BEQ DLIOn               ;
 DLIOff:
         LDA DList,X             ;
@@ -1636,6 +1672,7 @@ VBI:
         PHA                     ;
         JSR SetHardware         ;
         JSR DialogModes         ;
+        JSR MonsterShade        ;
         LDA #$00                ;The first row's DLI is row 1's.
         STA DliRow              ;
         LDX #<DLI               ;The interrupts: a battle's own chain, or the

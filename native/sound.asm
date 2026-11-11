@@ -15,7 +15,10 @@
 ;counter; and the result goes in POKEY: SQ1 on channels 1+2 joined
 ;(16 bits at 1.79MHz), SQ2 or the noise (the sound effects') on channel 3,
 ;the triangle on channel 4 (8 bits at 64kHz), all pure tones but the
-;noise. The square waves' duty cycles are not kept.
+;noise. The square waves' duty cycles are not kept. POKEY's channels add
+;up as they are, without the NES's softening of a loud mix, so the music
+;plays a quarter softer than the game's and at half while an effect
+;sounds, the effect at its own loudness (MusicLoud).
 ;
 ;PlayMusic / PlaySFX (A: the game's music or effect number) only ask: the
 ;VBI starts it, so the engine is never caught halfway.
@@ -28,6 +31,9 @@
 .alias OP_WAIT          $F3     ;
 .alias OP_GOTO          $F4     ;
 .alias TRI_VOLUME       10      ;The triangle's loudness (it has no volume).
+.alias VIB_DELAY        20      ;Frames an SQ1 note sounds before its vibrato.
+.alias NoiseKind        $07CF   ;The effect's noise's distortion (AUDC's top bits: NoiseDist).
+.alias VibAge           $07D0   ;Frames SQ1's note has sounded (to 255).
 
 ;The game's software registers, X = 0 SQ1, 2 SQ2, 4 TRI, 6 noise.
 .alias ChIndex          $40     ;8: data pointers (zero page, for (ChIndex,X)),
@@ -208,6 +214,9 @@ InitChannel:
 ;Sound effect A (0 on): on the noise channel's data, SQ2's hardware.
 InitSFX:
         TAX                     ;
+        LDA NoiseDist,X         ;Its noise's texture (sound.py's NOISE_DIST,
+                                ;in SOUND_BANK, in now).
+        STA NoiseKind           ;
         LDA SFX_LO,X             ;
         STA ChIndex+6           ;
         LDA SFX_HI,X             ;
@@ -345,6 +354,10 @@ SndNote:
         BCC +                   ;
         LDA #NUM_NOTES-1        ;
 *       STA ChNote,Y            ;
+        CPY #$00                ;(SQ1's: its vibrato waits again.)
+        BNE NoteAged            ;
+        STY VibAge              ;
+NoteAged:
         JSR StartNote           ;
         JMP ProcessByte         ;
 
@@ -476,34 +489,101 @@ APUTriSound:
 ;--------------------------------------[POKEY]-------------------------------------------------------
 
 ToPokey:
-        LDX ChNote              ;SQ1: channels 1+2.
+        LDY #$00                ;The music's loudness: MusicVol's first 16,
+        LDA SFXActive           ;its second while an effect plays (the
+        BEQ PokeyLoud           ;effect then heard over it).
+        LDY #16                 ;
+PokeyLoud:
+        STY SndTemp             ;
+        LDA VibAge              ;
+        CMP #$FF                ;
+        BEQ +                   ;
+        INC VibAge              ;
+*       LDX ChNote              ;SQ1: channels 1+2, with a vibrato once a
+        LDA VibAge              ;note has sounded VIB_DELAY frames: its
+        CMP #VIB_DELAY          ;divider and up to twice its high byte more
+        BCC VibNone             ;or less (about 14 cents), a cycle each 16
+        LDA FrameCount          ;frames (VibMul: by the phase, the second
+        LSR                     ;half less).
+        AND #$07                ;
+        TAY                     ;
+        LDA Sq1DivHi,X          ;
+        STA SndTemp2            ;
+        LDA VibMul,Y            ;
+        BEQ VibNone             ;
+        CMP #$02                ;
+        BNE +                   ;
+        ASL SndTemp2            ;
+*       LDA Sq1DivLo,X          ;
+        CPY #$04                ;
+        BCS VibDown             ;
+        CLC                     ;
+        ADC SndTemp2            ;
+        STA AUDF1               ;
+        LDA Sq1DivHi,X          ;
+        ADC #$00                ;
+        STA AUDF2               ;
+        JMP VibDone             ;
+VibDown:
+        SEC                     ;
+        SBC SndTemp2            ;
+        STA AUDF1               ;
+        LDA Sq1DivHi,X          ;
+        SBC #$00                ;
+        STA AUDF2               ;
+        JMP VibDone             ;
+VibNone:
         LDA Sq1DivLo,X          ;
         STA AUDF1               ;
         LDA Sq1DivHi,X          ;
         STA AUDF2               ;
+VibDone:
         LDA #$00                ;
         STA AUDC1               ;
         LDA ChVol               ;
-        ORA #$A0                ;
+        JSR MusicLoud           ;
         STA AUDC2               ;
         LDA ChVol+3             ;Channel 3: the noise while it sounds, else
-        BEQ +                   ;SQ2.
-        ORA #$80                ;
+        BEQ PokeySq2            ;SQ2.
+        ORA NoiseKind           ;(Its texture: NoiseDist.)
         STA AUDC3               ;
         LDX ChNote+3            ;
         LDA NoiseDiv,X          ;
         STA AUDF3               ;
-        JMP ++                  ;
-*       LDX ChNote+1            ;
+        JMP PokeyTri            ;
+PokeySq2:
+        LDX ChNote+1            ;
         LDA Sq2Div,X            ;
         STA AUDF3               ;
         LDA ChVol+1             ;
+        LDX SFXActive           ;(An effect's tone at its own loudness.)
+        BNE PokeySfx            ;
+        JSR MusicLoud           ;
+        JMP PokeySq2Set         ;
+PokeySfx:
         ORA #$A0                ;
+PokeySq2Set:
         STA AUDC3               ;
-*       LDX ChNote+2            ;Channel 4: the triangle.
+PokeyTri:
+        LDX ChNote+2            ;Channel 4: the triangle.
         LDA TriDiv,X            ;
         STA AUDF4               ;
         LDA ChVol+2             ;
-        ORA #$A0                ;
+        JSR MusicLoud           ;
         STA AUDC4               ;
         RTS                     ;
+
+;A = a music channel's volume A (0-15) as POKEY plays it, pure tone: a
+;quarter softer than the game's, half while an effect plays (SndTemp: 0
+;or 16), so that the effects are heard over it. (Never 0 for a volume
+;that is not, but AUDC's tone bits make it non-zero anyway.)
+MusicLoud:
+        CLC                     ;
+        ADC SndTemp             ;
+        TAX                     ;
+        LDA MusicVol,X          ;
+        ORA #$A0                ;
+        RTS                     ;
+VibMul:         .byte 0, 1, 2, 1, 0, 1, 2, 1
+MusicVol:       .byte 0, 1, 2, 2, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10, 11, 11
+                .byte 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8

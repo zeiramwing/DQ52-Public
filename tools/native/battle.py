@@ -215,8 +215,12 @@ def monster(chr_rom, sprites, palette, scene, map_regs, picture=None):
     monster's pixels and (a quarter as much) the scene's on those rows.
     Record: the band's first row, COLPF1-3, how the map beside the window
     shows in the band (each pixel value's new one for a character without
-    bit 7, then with it, then the new bit 7 for each), the glyph count, then 14 codes a row with the monster and 14 a row
-    without it (once it is gone), then the glyphs (codes 1-63, 114-127)."""
+    bit 7, then with it, then the new bit 7 for each), the glyph count, the
+    row a second set starts at (0: none: a monster of more than 63 glyphs
+    has two, Lower2Set from that row) and its glyph count, then 14 codes a
+    row with the monster and 14 a row without it (once it is gone), then
+    the glyphs (codes 1-63, his second form's 116-127 too), then the second
+    set's."""
     if picture is None:
         px = monsters.picture(chr_rom, sprites)
         colors = {k: (palette[(k >> 2) * 3 + (k & 3) - 1] if k & 3 else 0x0F) for k in range(16)}
@@ -269,23 +273,46 @@ def monster(chr_rom, sprites, palette, scene, map_regs, picture=None):
         return bytes(data), 0x80 if keep == 4 else 0
 
     cells = ([], [])
-    uses = {}
     for which, with_monster in ((0, True), (1, False)):
         for r in rows:
             for c in range(SCENE_COL, SCENE_COL + SCENE_SIZE):
-                g, flag = glyph(r, c, with_monster)
-                cells[which].append((g, flag))
-                uses[g] = uses.get(g, 0) + 1
+                cells[which].append((r,) + glyph(r, c, with_monster))
     blank = bytes(8)                    # (All black: code 0, no glyph of its own.)
-    glyphs = sorted((g for g in uses if g != blank), key=lambda g: -uses[g])
+
+    def band(lo, hi):
+        """The glyphs the cells of rows LO to HI - 1 use, the most used first."""
+        uses = {}
+        for w in (0, 1):
+            for r, g, _ in cells[w]:
+                if lo <= r < hi and g != blank:
+                    uses[g] = uses.get(g, 0) + 1
+        return sorted(uses, key=lambda g: -uses[g])
+
     room = MAX_GLYPHS if picture is None else BOSS_GLYPHS
-    kept = glyphs[:room]
-    # Too many: the least used take the nearest kept glyph's place.
-    place = {g: i for i, g in enumerate(kept)}
-    for g in glyphs[room:]:
-        place[g] = min(range(len(kept)), key=lambda i: glyph_distance(g, kept[i]))
-    glyphs = kept
-    grids = tuple([0 if g == blank else glyph_code(place[g]) | flag for g, flag in cells[w]] for w in (0, 1))
+    end = SCENE_ROW + SCENE_SHOWN
+    split = 0
+    if picture is None and len(band(top, end)) > room:
+        # Too many for one set: the rows from SPLIT get a second (Lower2Set),
+        # at the row that leaves the fuller of the two the fewest.
+        split = min(range(top + 1, end), key=lambda s: max(len(band(top, s)), len(band(s, end))))
+    bands = [(top, split or end)] + ([(split, end)] if split else [])
+    sets, places = [], []
+    for lo, hi in bands:
+        glyphs = band(lo, hi)
+        kept = glyphs[:room]
+        # Too many: the least used take the nearest kept glyph's place.
+        place = {g: i for i, g in enumerate(kept)}
+        for g in glyphs[room:]:
+            place[g] = min(range(len(kept)), key=lambda i: glyph_distance(g, kept[i]))
+        sets.append(kept or [blank])    # (One at least: CopyGlyphs. A dark one all black on black.)
+        places.append(place)
+
+    def code(r, g, flag):
+        if g == blank:
+            return 0
+        return glyph_code(places[1 if split and r >= split else 0][g]) | flag
+
+    grids = tuple([code(r, g, flag) for r, g, flag in cells[w]] for w in (0, 1))
     # How the map's pixels show in the band: for a character without and
     # with bit 7 (COLPF3 for value 3), each value's new one and the new bit 7.
     values, inverse = [], []
@@ -293,9 +320,10 @@ def monster(chr_rom, sprites, palette, scene, map_regs, picture=None):
         targets = [remap[0], remap[1], remap[2], remap[3 + b]]
         values += [min(t, 3) for t in targets]
         inverse.append(0x80 if targets[3] == 4 else 0)
-    glyphs = glyphs or [blank]          # (One at least: CopyGlyphs. A dark one all black on black.)
-    record = bytes([top] + regs[2:5] + values + inverse + [len(glyphs)]) + bytes(grids[0]) + bytes(grids[1])
-    return record + b"".join(glyphs), len(glyphs)
+    second = sets[1] if split else []
+    record = bytes([top] + regs[2:5] + values + inverse + [len(sets[0]), split, len(second)])
+    record += bytes(grids[0]) + bytes(grids[1])
+    return record + b"".join(sets[0]) + b"".join(second), len(sets[0]) + len(second)
 
 
 def monster_records(rom, chr_rom, plan):

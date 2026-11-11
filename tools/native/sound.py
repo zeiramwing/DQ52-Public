@@ -24,6 +24,14 @@ POKEY_64K = 63921
 NOISE_PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
 
 
+# Each sound effect's noise texture on POKEY (AUDC's distortion bits, the
+# port's own: the NES has only its white noise): $80 white noise, as the
+# NES's; $00 crackling (17-bit noise through the 5-bit), the dragon's fire;
+# $C0 buzzing (the 4-bit), the hits' crunch and the force field's.
+NOISE_DIST = [0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xC0, 0x80, 0x80, 0xC0,
+              0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]
+
+
 def note_timers(rom):
     """The NES timer of each note (MusicalNotesTbl, from note $80)."""
     return [w & 0x7FF for w in rom.words("MusicalNotesTbl", NOTES)]
