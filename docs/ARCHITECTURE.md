@@ -49,7 +49,7 @@ VBI puts it back after reading sound data).
 | 3, 9, 11, 14 | map images (charsets and colors), 7 a bank |
 | 4, 5 | monster pictures (5 also holds extra map images) |
 | 6 | music and effects, and the sound's divider tables |
-| 7 | people graphics, RAM tables copied at boot, the Dragonlord's frames; the townspeople's other step (`GFX_ANIM` $8B00), set B (`GFX_SETB` $9800), the hero's 16 frames (`GFX_HERO` $9C00) |
+| 7 | RAM tables copied at boot (from $8500); the townspeople's other step (`GFX_ANIM` $8B00), set B (`GFX_SETB` $9800), the hero's 16 frames (`GFX_HERO` $9C00) |
 | 8 | `MSG_BANK`: message tables, game tables (enemies, maps, shops, levels...), test scripts; **code** at $A000 (`poweron.asm`); the credits at $B400 |
 | 10 | the townspeople tables; the title screen at $9000 |
 | 13 | monster pictures on black (caves) |
@@ -58,7 +58,7 @@ VBI puts it back after reading sound data).
 Free room is roughly 9KB in bank 7 (past `GFX_HERO`'s 1KB at $9C00),
 9.3KB in bank 10 and 5KB each in banks 5 and 6; the map images' banks
 hold 7 of $500 bytes each, so each has about 7KB unused. Bank 1 (text)
-is full. The program half has about 530 bytes free; the build prints
+is full. The program half has about 1,270 bytes free; the build prints
 `program to $XXXX, N bytes free`.
 
 ### Code that runs from a bank (`poweron.asm`)
@@ -86,14 +86,14 @@ decoding, and the end credits. Rules for code there:
 | $0200-$02FF | the hero (`HeroName` $0240 on: level, HP, gold, stats, items), shop and list state |
 | $0300 | the display list |
 | $0400-$07FF | townspeople arrays, enemy record, map record (`MapRec` $0770), password and power-on state; $07Bx-$07Cx: flash, fades, credits, title |
-| $0800-$0BFF | tables copied from bank 7 at boot (text tile codes, window templates, people colors) |
-| $0C00-$0FFF | player/missile graphics (players 0-2 the hero, 3 the one townsperson a map can have as a sprite) |
+| $0800-$0BFF | tables copied from bank 7 at boot (text tile codes, window templates) |
+| $0C00-$0FFF | player/missile graphics (players 0-2 the hero; player 3 unused) |
 | $1000-$1FFF | the screen: a ring of 32 rows × 128 bytes, scrolled |
 | $2000-$28FF | set A (the map's image), set B (every map's, `LoadSetB`), block tables, colors (`MapColors` $28C8) |
-| $2900-$2BFF | the drawn person's state (`OldKey`...), the stepping characters (`AnimCodes` $2950, `AnimGlyphs` $2B00); a battle's `RemapTbl` $2A00 |
+| $2900-$2BFF | the stepping characters (`AnimCodes` $2950, `AnimGlyphs` $2B00); a battle's `RemapTbl` $2A00 |
 | $2C00-$2FFF | the current town's map (doors and chests change it) |
 | $3000-$3AFF | a battle's: the monster's sets (`LowerSet` $3000, `Lower2Set` $3400), its grids (`WithoutGrid` $3800, `WithGrid` $3900), `SceneGrid` $3A00 |
-| $3B00-$3FFF | people frames ($3B00-$3BFF unused: the hero's frames are read from bank 7) |
+| $3B00-$3FFF | the password's bytes and characters (`PwBuf` $3B00, `PwChars` $3B20); the rest free |
 
 The whole of `$0400-$28FF` is cleared at boot.
 
@@ -205,10 +205,10 @@ a step. The whole suite takes about an hour; run it before pushing.
 | spells, in the field and in battle | `spell.asm` |
 | battles, levels, death, the name's effect on stats | `battle.asm` |
 | the castle, the Dragonlord, quest events, the ending, curses | `castle.asm` |
-| townspeople: loading, stepping in place, drawing, the display interrupt | `people.asm` |
+| townspeople: loading, stepping in place; the display interrupts | `people.asm` |
 | windows (status, command, templates) | `windows.asm` |
 | the dialog window and message printing | `text.asm` |
 | the title, name and password windows; credits | `poweron.asm` |
-| password encoding and the King's window stubs | `password.asm`, `poweron.asm` |
+| password encoding and the King's window stubs | `password.asm`, `poweron.asm`; `tools/native/password.py` the same in Python |
 | what a map, a town or a person converts to | `tools/native/maps.py`, `convert.py` |
 | where a ROM table is | `tools/native/rom.py` (`AT`) |

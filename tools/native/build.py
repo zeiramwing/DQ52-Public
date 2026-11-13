@@ -472,17 +472,13 @@ def main():
         sys.exit("build: the credits do not fit in MSG_BANK")
     at = CREDITS_AT - 0x8000
     halves[MSG_BANK][at:at + len(credits)] = credits
-    gfx = bytes(0x100) + open(os.path.join(out, "people.bin"), "rb").read()   # (A page unused: the hero's once.)
-    if len(gfx) != 0x500:
-        sys.exit(f"build: the hero and people graphics are {len(gfx)} bytes, not 1280")
+    gfx = bytes(0x500)                  # (Unused: the hero's and the people's frames once.)
     # Then the tables copied to RAM at $0800 at power on: TextA, TextB, the
     # windows' templates (main.asm's RAM_TABLES).
     tables = open(os.path.join(out, "textab.bin"), "rb").read()
     tables += bytes(command_template() + battle_template() + status_template())
     tables += bytes(0x3E0 - len(tables))                # (BridgeRow's RAM.)
-    tables += open(os.path.join(out, "colors.bin"), "rb").read()    # PersonColors, at $0BE0.
     gfx += tables + bytes(0x400 - len(tables))
-    gfx += open(os.path.join(out, "lord.bin"), "rb").read()        # The Dragonlord's frames,
     gfx += bytes(0xA00 - len(gfx))
     gfx += bytes(0x100)                                            # (unused),
     if len(gfx) != 0xB00:

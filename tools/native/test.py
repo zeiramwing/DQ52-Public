@@ -28,8 +28,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROFILE = bool(os.environ.get("PROFILE"))
-PHASES = ["main loop (a frame)", "MovePeople", "StepFrame", "DrawPeople", "ShowHero, SetScroll", "StartStep",
-          "  DrawPeople's clear", "  PlacePeople"]  # PROFILE=1: every script a profile build.
+PHASES = ["main loop (a frame)", "(unused)", "StepFrame", "(unused)", "ShowHero, SetScroll", "StartStep",
+          "(unused)", "(unused)"]  # PROFILE=1: every script a profile build.
 ROOT = os.path.dirname(os.path.dirname(HERE))
 ROWS, DIALOG_ROW = 28, 18
 sys.path.insert(0, HERE)
@@ -178,9 +178,9 @@ def run(rom_path, out_root, name):
     frames = 200 + sum(int(e) for e in entries)       # The script's frames, and loading.
     result = subprocess.run([sys.executable, os.path.join(HERE, "..", "run5200.py"), cart, "--type", "74",
                              "--until", f"{labels['parked'] + 4:04X}", "--frames", str(frames), "--timeout", str(60 + frames // 20),
-                             "--png", png, "--dump", "0000:C00", "--dump", "1000:1000"],
+                             "--png", png, "--dump", "0000:C00", "--dump", "1000:1000", "--dump", "3B00:60"],
                             capture_output=True, text=True)
-    mem = bytearray(0x2000)
+    mem = bytearray(0x4000)
     for m in re.finditer(r"^\$([0-9A-F]{4}): ([0-9a-f ]+)$", result.stdout, re.M):
         data = bytes.fromhex(m.group(2))
         mem[int(m.group(1), 16):int(m.group(1), 16) + len(data)] = data

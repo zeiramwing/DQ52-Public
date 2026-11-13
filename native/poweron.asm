@@ -247,11 +247,30 @@ PwWrong:
 PwTyped:
         RTS                     ;
 PwPassed:
-        LDA #NAME_ENTRY         ;Right: the name asked for, then the King.
-        BEQ +                   ;
-        STA PwOk                ;
-        JMP NameOpen            ;
-*       JSR NameFull            ;
+        JSR NameStats           ;Right: the name's part in the stats, and the
+        LDA PwHP                ;HP and MP as kept (no more than the max;
+        CMP MaxHP               ;cursed, or none, 1, as the game starts a
+        BCC PwHPMax             ;cursed hero).
+        LDA MaxHP               ;
+PwHPMax:
+        LDX Flags2              ;
+        CPX #F2_BELT            ;(F2_BELT or F2_NECK: cursed.)
+        BCS PwHPOne             ;
+        TAX                     ;
+        BNE PwHPSet             ;
+PwHPOne:
+        LDA #$01                ;
+PwHPSet:
+        STA HitPoints           ;
+        LDA PwMP                ;
+        CMP MaxMP               ;
+        BCC PwMPSet             ;
+        LDA MaxMP               ;
+PwMPSet:
+        STA MagicPoints         ;
+        LDX #<NameGlyphs        ;
+        LDY #>NameGlyphs        ;
+        JSR FarOut              ;
 PwGood:
         LDA #$00                ;Before the King, facing him (the button
         STA Pressed             ;used up: walking goes on this frame).
@@ -357,15 +376,37 @@ NameTiles:
         .byte $49, $40, $47, $4C, $4B, $5F
 
 ;WinRow, WinCol (X = PwLen's count) = where the next character entered
-;goes, on row 7.
+;goes: the name's along row 7, the password's as PwAt places them from
+;there.
 PwTypedAt:
         LDA #EN_ROW+1           ;
         STA WinRow              ;
+        LDA #EN_COL+2           ;
+        STA WinCol              ;
         LDA PwLen               ;
         AND #$7F                ;
         TAX                     ;
+        LDY NameMode            ;
+        BEQ PwAt                ;
         CLC                     ;
-        ADC #EN_COL+2           ;
+        ADC WinCol              ;
+        STA WinCol              ;
+        RTS                     ;
+;WinRow, WinCol from a password's first place on = character X's (X kept):
+;16 a row, a column between each 4.
+PwAt:
+        TXA                     ;
+        AND #$10                ;(Its row.)
+        BEQ +                   ;
+        INC WinRow              ;
+*       TXA                     ;
+        AND #$0F                ;
+        STA Tmp                 ;
+        LSR                     ;
+        LSR                     ;
+        CLC                     ;
+        ADC Tmp                 ;
+        ADC WinCol              ;
         STA WinCol              ;
         RTS                     ;
 
@@ -413,14 +454,9 @@ PwDecChar:
         INX                     ;
         CPX #PW_LEN             ;
         BNE PwDecChar           ;
-        LDY #$04                ;(100 bits in: 4 more to the top.)
-*       CLC                     ;
-        JSR PwShift             ;
-        DEY                     ;
-        BNE -                   ;
         JSR PwScramble          ;
         JSR PwCheck             ;
-        CMP PwBuf+11            ;
+        CMP PwBuf+PW_BODY       ;
         BEQ +                   ;
         CLC                     ;
         RTS                     ;
@@ -441,20 +477,40 @@ PwDecChar:
         LSR                     ;
         AND #$07                ;
         STA Herbs               ;
-        LDA PwBuf+8             ;The curses.
-        AND #$08                ;
-        ASL                     ;
-        ASL                     ;
-        ASL                     ;
-        STA Flags2              ;
-        LDA PwBuf+8             ;
-        AND #F2_NECK            ;
-        ORA Flags2              ;
-        STA Flags2              ;
         LDA PwBuf+9             ;
         STA Equipped            ;
         LDA PwBuf+10            ;
         STA ModFlags            ;
+        LDA PwBuf+11            ;
+        STA Flags2              ;
+        LDA PwBuf+12            ;(HP and MP once the stats are: PwPassed.)
+        STA PwHP                ;
+        LDA PwBuf+13            ;
+        STA PwMP                ;
+        LDX #$00                ;The name: 5 bits a character, the first at
+        STX NameLen             ;the top.
+PwNameChar:
+        LDA #$00                ;
+        STA Tmp                 ;
+        LDY #$05                ;
+*       ASL PwBuf+18            ;
+        ROL PwBuf+17            ;
+        ROL PwBuf+16            ;
+        ROL PwBuf+15            ;
+        ROL PwBuf+14            ;
+        ROL Tmp                 ;
+        DEY                     ;
+        BNE -                   ;
+        LDY Tmp                 ;
+        LDA NameTiles,Y         ;
+        STA HeroName,X          ;
+        CMP #TL_BLANK           ;(Its length: to the last not blank.)
+        BEQ +                   ;
+        STX NameLen             ;
+        INC NameLen             ;
+*       INX                     ;
+        CPX #NAME_MAX           ;
+        BNE PwNameChar          ;
         JSR SelectMsg           ;(The level tables' bank.)
         LDA #$01                ;The level the experience is, its stats,
         STA Level               ;HP and MP full.
@@ -622,36 +678,66 @@ PackState:
         STA PwBuf+4,X           ;
         DEX                     ;
         BPL -                   ;
-        LDA Herbs               ;Keys and herbs, a nibble each, and in each
-        ASL                     ;nibble's spare top bit a curse: the belt's
-        ASL                     ;in bit 3, the necklace's in bit 7.
+        LDA Herbs               ;Keys and herbs, a nibble each.
+        ASL                     ;
+        ASL                     ;
         ASL                     ;
         ASL                     ;
         ORA Keys                ;
-        STA PwBuf+8             ;
-        LDA Flags2              ;
-        AND #F2_BELT            ;
-        LSR                     ;
-        LSR                     ;
-        LSR                     ;
-        ORA PwBuf+8             ;
-        STA PwBuf+8             ;
-        LDA Flags2              ;
-        AND #F2_NECK            ;
-        ORA PwBuf+8             ;
         STA PwBuf+8             ;
         LDA Equipped            ;
         STA PwBuf+9             ;
         LDA ModFlags            ;
         STA PwBuf+10            ;
-        JSR PwCheck             ;
+        LDA Flags2              ;What is worn, the curses.
         STA PwBuf+11            ;
-        LDA #$00                ;
+        LDA HitPoints           ;
         STA PwBuf+12            ;
-;PwBuf's first 11 bytes XORed with the sequence from its check (its own
+        LDA MagicPoints         ;
+        STA PwBuf+13            ;
+        LDX #$04                ;Then the name: 8 characters of 5 bits
+        LDA #$00                ;(their places in NameTiles), the first at
+*       STA PwBuf+14,X          ;the top.
+        DEX                     ;
+        BPL -                   ;
+        LDX #$00                ;
+PwPackName:
+        LDA HeroName,X          ;
+        LDY #31                 ;(Not in the grid: lower case, its capital;
+*       CMP NameTiles,Y         ;else a blank.)
+        BEQ PwNameAt            ;
+        DEY                     ;
+        BPL -                   ;
+        LDY #31                 ;
+        SEC                     ;
+        SBC #$0A                ;
+        CMP #26                 ;
+        BCS PwNameAt            ;
+        TAY                     ;
+PwNameAt:
+        TYA                     ;
+        ASL                     ;
+        ASL                     ;
+        ASL                     ;
+        STA Tmp                 ;
+        LDY #$05                ;
+*       ASL Tmp                 ;
+        ROL PwBuf+18            ;
+        ROL PwBuf+17            ;
+        ROL PwBuf+16            ;
+        ROL PwBuf+15            ;
+        ROL PwBuf+14            ;
+        DEY                     ;
+        BNE -                   ;
+        INX                     ;
+        CPX #NAME_MAX           ;
+        BNE PwPackName          ;
+        JSR PwCheck             ;
+        STA PwBuf+PW_BODY       ;
+;PwBuf's first PW_BODY bytes XORed with the sequence from its check (its own
 ;inverse: the same unscrambles).
 PwScramble:
-        LDA PwBuf+11            ;
+        LDA PwBuf+PW_BODY       ;
         STA PwKey               ;
         LDY #$00                ;
 *       LDA PwKey               ;
@@ -666,11 +752,11 @@ PwScramble:
         ADC #$3B                ;
         STA PwKey               ;
         INY                     ;
-        CPY #11                 ;
+        CPY #PW_BODY            ;
         BNE -                   ;
         RTS                     ;
 
-;A = the CRC-8 of PwBuf's first 11 bytes.
+;A = the CRC-8 of PwBuf's first PW_BODY bytes.
 PwCheck:
         LDA #$5A                ;
         LDY #$00                ;
@@ -683,14 +769,14 @@ PwCrcByte:
 *       DEX                     ;
         BNE --                  ;
         INY                     ;
-        CPY #11                 ;
+        CPY #PW_BODY            ;
         BNE PwCrcByte           ;
         RTS                     ;
 
 ;PwBuf shifted left a bit, C in at the bottom, its top bit out in C (X kept).
 PwShift:
         STX Tmp2                ;
-        LDX #12                 ;
+        LDX #PW_BODY            ;
 *       ROL PwBuf,X             ;
         DEX                     ;
         BPL -                   ;
@@ -772,7 +858,7 @@ PwFrame:
 ;--------------------------------------[The King's]--------------------------------------------------
 
 ;The deeds recorded: the password in a window over the map (its frame,
-;then its 20 characters), until a button.
+;then its 32 characters), until a button.
 PwShowStep:
         JSR PackState           ;
         JSR PwEncode            ;
@@ -780,23 +866,25 @@ PwShowStep:
         STA WinRow              ;
         LDA #PW_COL             ;
         STA WinCol              ;
-        LDA #$01                ;
+        LDA #$02                ;
         STA Rows                ;
-        LDA #PW_LEN             ;
+        LDA #PW_WIDTH           ;
         STA PwW                 ;
         JSR PwFrame             ;
+        LDX #$00                ;
+PwShowChar:
+        STX PwLen               ;
         LDA #PW_ROW+1           ;
         STA WinRow              ;
-        LDA #PW_COL+1           ;
+        LDA #PW_COL+2           ;
         STA WinCol              ;
-        LDX #$00                ;
-*       STX PwLen               ;
+        JSR PwAt                ;
         LDA PwChars,X           ;
         JSR PwPut               ;
         LDX PwLen               ;
         INX                     ;
         CPX #PW_LEN             ;
-        BNE -                   ;
+        BNE PwShowChar          ;
         LDA #PW_WAIT            ;
         STA ShopState           ;
         RTS                     ;

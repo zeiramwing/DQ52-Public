@@ -67,9 +67,9 @@ One (an FPGA 5200) on a CRT television; not yet on an original 5200.
 |---|---|
 | **160 colour pixels across**, not 256 (colour text mode: 4 wide pixels a character) | Every map tile, monster and figure is squeezed to half its width at build time, keeping thin lines (outlines, mortar) over the fill around them. |
 | **5 colours a screen row** (4, and a fifth chosen per character), not 4 palettes of 3 | Each map gets a colour plan made from its NES palette. A monster's rows get their own colours, so the map beside the battle window is shown in the nearest of those. Some NES colours share one. |
-| **4 one-colour sprites**, not 64 | See the townspeople, below. The hero has three of them, for his own three colours. Monsters are drawn in the background, not as sprites. |
+| **4 one-colour sprites**, not 64 | The hero has three of them, for his own three colours. The townspeople and monsters are drawn in the background, not as sprites. |
 | **128 characters a set** for map and window text together | Window text is in capitals (below). A town's graphics are capped at 76 characters. A monster gets 63 a set, and the biggest two sets, split by rows. |
-| **No battery memory** | The King gives a 20-character password, not a saved game (the start menu's NEW GAME and CONTINUE are the port's own). It keeps experience, gold, items, equipment and the quest's progress, not the name: that is asked for again. |
+| **No battery memory** | The King gives a 32-character password, not a saved game (the start menu's NEW GAME and CONTINUE are the port's own). It keeps all the NES's log keeps: the name, experience, gold, items, keys and herbs, equipment, what is worn and the curses, the quest's progress, and the HP and MP as they were. |
 | **4 sound channels, 8-bit pitch on most** | The first voice has exact pitch (two channels joined). The second and the bass are 8-bit: 15 of the 44 notes the second voice plays are 10 to 24 cents off. The square waves' tone settings (duty) and the wings' pitch sweep are not kept. Sound effects share the second voice's channel; the music plays a quarter softer than the NES's, and at half while an effect sounds, so the effects are heard. |
 
 ### The townspeople
@@ -85,9 +85,11 @@ spare for them, the port draws the people into each town's map instead:
 - **They face down, always**, and do not turn to the hero when he talks
   to them: one picture each, not four.
 - **They step in place**, in time with the hero, as on the NES.
-- **A few are still sprites**, in fewer colours: the princess, the staff
-  of rain's old man, the Dragonlord, and one person each in Brecconary
-  and Rimuldar who did not fit in the 76 characters.
+- **None are sprites.** Everyone is part of the town's picture, those who
+  come and go (the princess at home, the staff of rain's old man, the
+  Dragonlord) too. In Brecconary and Rimuldar, the fullest towns, a few
+  of the townspeople's characters that differed by a pixel or few were
+  made one to make room for the last two.
 
 ### Text
 
@@ -601,7 +603,7 @@ band's colors, so water there can show grey or brown.
   same in Python. The password keeps no name: after a right one, the name
   window asks for it (below). After recording the King no longer asks
   whether to go on. Tests: `kingsave`,
-  `pwentry`, `king2` (NO to recording, then the question).
+  `pwentry`, `king2` (NO to recording, then the question). *Now:* 32 characters, keeping the name, HP and MP too (below).
 - More tables out of the program, for room: the map links, each map's
   record (copied to RAM at a map's load), the overworld's enemy zones and
   groups, the sound's dividers (with the sound bank in). The test harness
@@ -709,6 +711,47 @@ band's colors, so water there can show grey or brown.
   sprites (they come and go). More color, no flicker for those drawn in
   the background, and in Brecconary the main loop takes 4,950 cycles a
   frame on average (it was 11,400). *Now:* all but five are, below.
+- The password keeps all the game's own log does, so a continued hero is
+  the one saved: 19 bytes (gold, experience, the items, keys and herbs,
+  the equipment, ModFlags, Flags2: the fighter's ring now too, the HP and
+  MP, and the name's 8 characters at 5 bits each, their places in the
+  name window's grid) and a check byte, scrambled as before: 160 bits,
+  32 characters, shown and typed in two rows of 16, four at a time.
+  After a right one the name is the password's (no name window: before,
+  a new name gave the stats a new pattern), the stats come from the level
+  and the name, and the HP and MP are as kept (no more than the max;
+  cursed, 1, as the game starts a cursed hero). PwBuf and PwChars moved
+  to $3B00, free since the people's frames went. password.py's `moves`
+  writes a test script's entries to type one. Tests: `kingsave`,
+  `pwentry`, `pwname`.
+- The townspeople's sprite code is gone, with no one to draw as a
+  sprite: DrawPeople, PlacePeople, Redraw and their tables, the DLI's
+  per-row player moves, ClearPlayers, the command window's hiding of the
+  people under it, and the people's frames (people.bin, copied to RAM at
+  power on; the build now stops if any townsperson is not in a map's
+  background). The people are a list for TALK and for who comes and goes,
+  and their stepping in place. The program has 1,272 bytes free (it had
+  71), and in Brecconary the main loop takes 3,020 cycles a frame on
+  average (it was 3,890).
+- Every townsperson in the background: the two left as sprites (in
+  Brecconary and Rimuldar, at their top edges, where neither town had a
+  character to spare) fit now. When a town is full, convert.py's
+  merged_people makes two of the townspeople's characters one where they
+  differ by MERGE_LIMIT (4) of their 32 pixels at most, the closest
+  first, until all fit; the map blocks' own characters are never
+  changed. Brecconary's four merges change 1 to 3 pixels, Rimuldar's 3
+  or 4. No townsperson is a sprite now (SpriteOne: none on every map).
+- Those who come and go are in the background too: the princess in the
+  throne room (once she is home), the staff of rain's old man, and the
+  Dragonlord on his floor (in his own figure, LORD_GRAPHIC). convert.py's
+  COMES_AND_GOES lists them with a ModFlags bit, and the build writes
+  each one's place and the block under it (CondMap and so on);
+  CondPeople, after a map's people load, puts back the block under each
+  who is not there (her not home, him dead) and takes the person out of
+  TALK's reach; the old man's block goes as he gives the staff
+  (CondHere). Before, nothing took the Dragonlord away once dead. The
+  sprite swap of his figure (SetLordGfx, lord.bin) is gone. Test:
+  `lordgone`.
 - Atari touches, things the NES does not do:
   - The overworld's sea sways: its open water's two characters swap with
     a copy whose waves sit a pixel to the right (convert.py's ripple),
@@ -927,6 +970,12 @@ cycles (it was 10,488).
 The program then had about 2.6KB free. Features since filled it; for room,
 the power-on screens, the password's making, the end credits and many
 tables run from or sit in other banks, and about 300 bytes are free.
+
+## Keypad overlay
+
+`extras/overlay/` has a printable overlay for the controller's keypad, its
+keys' commands named, in artwork of the project's own; see its README for
+printing and fitting it.
 
 ## Tools
 

@@ -190,16 +190,6 @@ def hero_frames(chr_rom, table, palettes, offset):
     return bytes(data), [2 * a, 2 * b, 2 * t]
 
 
-def squeeze_wide(px):
-    """16-pixel rows to 8, keeping thin features (as squeeze_tile)."""
-    out = []
-    for row in px:
-        left = colordata.squeeze_tile([row[:8]] * 8)[0]
-        right = colordata.squeeze_tile([row[8:]] * 8)[0]
-        out.append([left >> (6 - 2 * i) & 3 for i in range(4)] + [right >> (6 - 2 * i) & 3 for i in range(4)])
-    return out
-
-
 # Blocks the hero and the townspeople cannot walk onto: water, rock walls,
 # doors, mountains, shop counters (the large tile), signs, black, and the
 # princess in the swamp cave (talked to from beside her).
@@ -302,11 +292,18 @@ def sprite_table_of(rom):
     return rom.table("CharSpriteTbl", 1024)
 
 
-# Maps whose people must stay sprites: the Dragonlord's floor (his figure is
-# swapped in there) and the staff of rain's cave (its old man goes); and the
-# princess anywhere (in the throne room only once she is home).
-PEOPLE_SPRITE_MAPS = {6, 13}
+# Maps whose people must stay sprites: none now. Those who come and go are
+# in the background too, their block put back to what it was under them
+# while they are not there (COMES_AND_GOES: the engine's CondPeople):
+# by map number and dialog control, the ModFlags bit, and whether its
+# being set (1) or clear (0) means gone at a map's load (no bit: there at
+# every load; the old man goes as he gives the staff).
+PEOPLE_SPRITE_MAPS = set()
 PRINCESS_CONTROL = 0x6F
+LORD_CONTROL = 0x70             # The Dragonlord (his figure LORD_GRAPHIC: not the table's).
+COMES_AND_GOES = {(5, PRINCESS_CONTROL): (0x04, 0),    # Home: F_RETURNED.
+                  (6, LORD_CONTROL): (0x20, 1),        # Dead: F_DL_DEAD.
+                  (13, 0x6C): (0x00, 0)}               # The staff of rain's old man.
 
 
 def people_looks(chr_rom, town, grid, border, people, table, sprite_pal):
@@ -327,8 +324,10 @@ def people_looks(chr_rom, town, grid, border, people, table, sprite_pal):
     crowd = [sum(1 for q in people if q is not p and abs(q[2] - p[2]) <= 1) for p in people]
     for i in sorted(range(len(people)), key=lambda i: -crowd[i]):
         graphic, x, y, facing, control = people[i][:5]
+        if control == LORD_CONTROL:
+            graphic = LORD_GRAPHIC
         look = (grid[y][x], graphic, facing)
-        if control == PRINCESS_CONTROL or (look not in by_look and not spare):
+        if look not in by_look and not spare:
             continue
         if look not in by_look:
             steps = []
@@ -470,6 +469,37 @@ def spread_sprites(grid, people, wanders):
 
 TEXT_CODES = len(DIGITS) + len(UPPER) + len(FRAME) + 1 + NAME_SLOTS + len(PUNCT)
 WIDE_CODE = TEXT_BASE_CODE + TEXT_CODES           # A wide map's 65th character's code.
+MERGE_LIMIT = 4                 # Pixels (of 32) two townspeople's characters may differ by to be one.
+
+
+def glyph_distance(a, b):
+    """How many of two characters' 32 pixels differ."""
+    return sum(1 for x, y in zip(a, b) for i in range(0, 8, 2) if (x >> i & 3) != (y >> i & 3))
+
+
+def merged_people(chr_rom, blocks, plan, pf, chars, extra, room):
+    """A town too full for all its people in the background: their
+    characters made one where two differ by MERGE_LIMIT pixels at most (the
+    closest first, never a map block's own, which stay as they are), until
+    all fit. Returns each merged character's stand-in."""
+    made = [d for base, person, _ in extra.values()
+            for d, _ in composite_chars(chr_rom, blocks, plan, pf, base, person)]
+    people = list(dict.fromkeys(d for d in made if d not in chars))
+    over = len(chars) + len(people) - room
+    rep = {}
+    while over > 0:
+        live = [d for d in people if d not in rep]
+        best = min(((glyph_distance(a, b), a, b) for a in live for b in live + list(chars) if b != a),
+                   key=lambda t: t[0], default=None)
+        if best is None or best[0] > MERGE_LIMIT:
+            break
+        _, a, b = best
+        rep[a] = b
+        for k, v in rep.items():            # (What stood in for A: B now.)
+            if v == a:
+                rep[k] = b
+        over -= 1
+    return rep
 assert WIDE_CODE == battle.TEXT_END
 
 
@@ -513,8 +543,9 @@ def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False, sea=Fa
     block_only = list(chars)                        # (The blocks' own characters.)
     pf = [colordata.NES_TO_ATARI[pal[(i // 4) * 3 + i % 4 - 1]] for i in src]
     accepted, second = set(), {}
+    rep = merged_people(chr_rom, blocks, plan, pf, chars, extra or {}, room) if wide else {}
     for b, (base, person, person1) in (extra or {}).items():     # (People in the background.)
-        made = composite_chars(chr_rom, blocks, plan, pf, base, person)
+        made = [(rep.get(d, d), bit7) for d, bit7 in composite_chars(chr_rom, blocks, plan, pf, base, person)]
         made1 = composite_chars(chr_rom, blocks, plan, pf, base, person1)
         new = {data for data, _ in made if data not in chars}
         if len(chars) + len(new) > room:                # (No room: a sprite then.)
@@ -561,7 +592,7 @@ def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False, sea=Fa
 def write_all(rom_path, out_dir):
     """Write the engine's data: images.bin (each map's characters and
     tables: bank data), world.bin (the overworld: bank data), towns.bin (the
-    towns, 1KB each: bank data), text.bin (bank data), hero.bin, people.bin
+    towns, 1KB each: bank data), text.bin (bank data), hero.bin
     and data.asm (tables)."""
     rom = romdata.Rom(rom_path)
     chr_rom = rom.chr
@@ -589,6 +620,7 @@ def write_all(rom_path, out_dir):
     counts.append(n)
     free_codes = [free]
     anims = [sea]                                   # (The overworld: its sea's.)
+    conds = []
     towns, everyone, starts = bytearray(), [], []
     town_plan = color_plan(rom, chr_rom, "TownPal")
     dungeon_plan = color_plan(rom, chr_rom, "DungeonPal")
@@ -604,10 +636,15 @@ def write_all(rom_path, out_dir):
                                              dungeon_plan if town["number"] >= maps.DARK_FROM else town_plan,
                                              tiles, extra, wide=town["number"] < maps.DARK_FROM)
         wanders = [p[5] for p in town_people]
+        for p, b in zip(town_people, looks):       # (Who comes and goes: the block under.)
+            key = (town["number"], p[4])
+            if key in COMES_AND_GOES and b in accepted:
+                flag, when = COMES_AND_GOES[key]
+                conds.append((len(starts) + 1, p[1], p[2], grid[p[2]][p[1]], flag, 0xFF if when else 0))
         town_people = people_into_blocks(grid, town_people, looks, accepted)
         town_people = spread_sprites(grid, town_people, wanders)
-        if sum(1 for q in town_people if q[5] == 0) > 1:    # (The engine draws one: SpriteOne.)
-            sys.exit(f"convert: {town['name']} has more than one person not in its background")
+        if any(q[5] == 0 for q in town_people):         # (The engine draws none as sprites.)
+            sys.exit(f"convert: {town['name']} has a person not in its background")
         images.append(image)
         counts.append(n)
         free_codes.append(free)
@@ -664,17 +701,6 @@ def write_all(rom_path, out_dir):
     carry, carry_colors = hero_frames(chr_rom, sprite_table, sprite_pal, CARRY_OFFSET)
     with open(os.path.join(out_dir, "hero.bin"), "wb") as f:    # GFX_HERO: 16 frames.
         f.write(hero + carry)
-    people_gfx, people_colors = people_frames(chr_rom, sprite_table, sprite_pal)
-    with open(os.path.join(out_dir, "people.bin"), "wb") as f:
-        f.write(people_gfx)
-    # The Dragonlord's figure (CharSpriteTbl's graphic 14, the sprites the
-    # game shows in his castle's bottom floor in the wizard's place,
-    # ChkDrgnLordNPC): swapped into the wizard's slot there.
-    lord_gfx, lord_color = people_frames(chr_rom, sprite_table, sprite_pal, [LORD_GRAPHIC])
-    with open(os.path.join(out_dir, "lord.bin"), "wb") as f:
-        f.write(lord_gfx)
-    with open(os.path.join(out_dir, "colors.bin"), "wb") as f:    # PersonColors (RAM), then his.
-        f.write(bytes(people_colors + lord_color))
 
     # The message lists of the dialog control bytes the people have, and
     # each person's control byte as an index among them.
@@ -916,6 +942,11 @@ def write_all(rom_path, out_dir):
         f.write(f".alias TO_WHITE         ${0x8000 + to_white_at:04X}\n\n")
         f.write(";COLPM0-2 for the hero, COLPM3's color for each townsperson graphic.\n")
         f.write(asm_bytes("HeroColors", hero_colors + carry_colors))      # (Then carrying her.)
+        f.write(";Who comes and goes, drawn in the background (COMES_AND_GOES): map,\n")
+        f.write(";X, Y, the block under, the ModFlags bit, $FF if its being set means gone.\n")
+        f.write(f".alias NUM_CONDS        {len(conds)}\n")
+        for k, label in enumerate(("CondMap", "CondX", "CondY", "CondUnder", "CondFlag", "CondWhen")):
+            f.write(asm_bytes(label, [c[k] for c in conds]))
         f.write(";Where each text block starts, in the text bank.\n")
         f.write(";Each map (0 the overworld, then maps.TOWNS): its image's place in the\n")
         f.write(";images bank, size, the block off its edges, the overworld block that\n")
@@ -1029,33 +1060,6 @@ def write_all(rom_path, out_dir):
 
 
 MONSTER_ROOM = 0x3FC0                   # A bank's data half, below its switches.
-
-
-def people_frames(chr_rom, table, sprite_pal, graphics=range(8)):
-    """The townspeople's frames (graphic * 8 + facing * 2 + step), 16 bytes
-    each, one player each: every pixel of the figure, in one color per
-    graphic, the Atari color nearest its palette's three colors (weighted by
-    how much each is drawn)."""
-    data, colors = bytearray(), []
-    for graphic in graphics:
-        frames, palette = [], 0
-        for d in range(4):
-            for s in range(2):
-                px, palette = maps.person_pixels(chr_rom, table, graphic, d, s)
-                frames.append(squeeze_wide(px))
-        weights = [sum(row.count(c) for f in frames for row in f) for c in (1, 2, 3)]
-        three = sprite_pal[palette * 3:palette * 3 + 3]
-        best = min(range(0, 256, 2), key=lambda a: sum(
-            w * colordata.rgb_distance(colordata.NES_RGB[c], colordata.ATARI_RGB[a // 2])
-            for w, c in zip(weights, three)))
-        colors.append(best)
-        for f in frames:
-            for row in f:
-                byte = 0
-                for c in row:
-                    byte = byte << 1 | (c != 0)
-                data.append(byte)
-    return bytes(data), colors
 
 
 if __name__ == "__main__":

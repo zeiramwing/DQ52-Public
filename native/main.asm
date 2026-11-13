@@ -89,15 +89,12 @@
 .alias ProfPSumHi       $03B8   ;
 .alias ProfPCntLo       $03C0   ;over this many times (8 phases: build.py).
 .alias ProfPCntHi       $03C8   ;
-.alias HeroGfx          $3B00   ;The hero's frames and the townspeople's
-.alias PeopleGfx        $3C00   ;(1KB), copied from GFX_BANK at power on.
 .alias GFX_BANK         7       ;
 .alias TextA            $0800   ;Then (build.py) each text tile's character in
 .alias TextB            $0900   ;set A (0: not there) and in set B, and the
 .alias CommandTemplate  $0A00   ;windows' tiles (missile memory, unused):
 .alias BattleCmdTemplate $0AA0  ;16 by 10, 16 by 6
 .alias StatusTemplate   $0B00   ;and 8 by 12,
-.alias PersonColors     $0BE0   ;8: each townsperson graphic's color.
 .alias MapImage         $2000   ;The map's image (convert.py's map_image):
 .alias CharsetA         $2000   ;its blocks' characters and the window text,
 .alias CharsetB         $2400   ;every text tile (the dialog window's rows),
@@ -214,7 +211,6 @@
 .alias MsgHi            $F2     ;
 .alias InsertBuf        $0290   ;16: the letters being inserted.
 .alias CmdDownMax       $0281   ;The command cursor goes down below this.
-.alias VScrolNow        $0282   ;VSCROL as the VBI set it, this frame.
 
 ;Game state.
 .alias HeroName         $0240   ;8: the name, in text tiles.
@@ -289,33 +285,13 @@ Start:
         LDA #$FF                ;
         STA CurBank             ;
         STA Shown               ;
-        LDA #GFX_BANK           ;The hero's and the people's graphics to
-        JSR SelectBank          ;RAM: 5 pages, then the tables: 4 at TextA.
-        LDY #$00                ;
-        LDX #$05                ;
-        STY Ptr                 ;
-        STY MapPtr              ;
-        LDA #>HeroGfx           ;
-        STA Ptr+1               ;
-        LDA #$80                ;
+        LDA #GFX_BANK           ;The tables to RAM: 4 pages at TextA (GFX_BANK
+        JSR SelectBank          ;from $8500).
+        LDA #$85                ;
         STA MapPtr+1            ;
-BootCopy:
-        LDA (MapPtr),Y          ;
-        STA (Ptr),Y             ;
-        INY                     ;
-        BNE BootCopy            ;
-        INC MapPtr+1            ;
-        INC Ptr+1               ;
-        DEX                     ;
-        BNE BootCopy            ;
-        LDA Ptr+1               ;
-        CMP #>[TextA+$400]      ;
-        BEQ BootCopied          ;
         LDA #>TextA             ;
-        STA Ptr+1               ;
         LDX #$04                ;
-        BNE BootCopy            ;
-BootCopied:
+        JSR CopyPages           ;
         JSR LoadSetB            ;
         LDA #$FF                ;
         STA Shown               ;
@@ -440,7 +416,8 @@ Walk:
 *       LDA Pressed             ;
         AND #BTN_A              ;
         BEQ +                   ;
-        JSR HideForCommand      ;
+        LDA #$01                ;(The command window's mode.)
+        STA Mode                ;
         JSR OpenCommand         ;
         JMP Frame               ;
 *       LDA Stick               ;
@@ -486,37 +463,16 @@ Stand:
         INC StandTime           ;
         CMP #STATUS_DELAY       ;
         BNE Frame               ;
-        LDA #$01                ;The people under it gone first (StatusOn
-        STA StatusOn            ;set for DrawPeople's look), then the window
-        JSR DrawPeople          ;drawn: else for that frame they could show
-        LDA #$00                ;over it. (ShowStatus draws only if it is
-        STA StatusOn            ;not up yet.)
         JSR ShowStatus          ;
 Frame:
         `prof_begin 4
         JSR ShowHero            ;
         JSR SetScroll           ;
         `prof_end 4
-        `prof_begin 3
-        JSR DrawPeople          ;
-        `prof_end 3
         JSR AnimStep            ;
         `prof_end 0
         JMP MainLoop            ;
 
-;The command window (and the status window with it) about to open: the
-;people under them gone first (DrawPeople, as if both were up), StatusOn
-;as it was after, so that ShowStatus still draws it if it was not up.
-HideForCommand:
-        LDA StatusOn            ;
-        PHA                     ;
-        LDA #$01                ;
-        STA StatusOn            ;
-        STA Mode                ;
-        JSR DrawPeople          ;
-        PLA                     ;
-        STA StatusOn            ;
-        RTS                     ;
 
 ;A new random number (a 16-bit Galois LFSR).
 NextRandom:
@@ -536,7 +492,6 @@ LoadMap:
         STA MapId               ;
         JSR LoadMapRec          ;
         JSR SetBridge           ;
-        JSR SetLordGfx          ;
         JSR LoadAnim            ;
         JSR PlayMapMusic        ;
         LDA #$01                ;
@@ -586,6 +541,7 @@ LoadMap:
         JSR HidePassage         ;
         JSR HidePrincess        ;
         JSR LoadPeople          ;
+        JSR CondPeople          ;
         JSR DLIBits             ;
         JSR DrawView            ;
         JSR SetScroll           ;
@@ -1515,25 +1471,13 @@ DialogModesDone:
         RTS                     ;
 
 ;The display list interrupts (people.asm's DLI), each at the end of a row
-;for the next: where a townsperson's player moves or changes color there
-;(RowHP2/RowHP3: DrawPeople sets them, and calls this after), at the end
-;of the row before the dialog window's (its character set), and in a
-;battle the scene's bands'. Each interrupt costs time, so only those rows
+;for the next: the row before the dialog window's (its character set),
+;and in a battle the scene's bands'. Each costs time, so only those rows
 ;have one.
 DLIBits:
-        LDA #$FF                ;(DrawPeople's rows not the same, after.)
-        STA OldMask             ;
-DLIBitRows:
-        LDA PeopleOn            ;(Townspeople: their rows count.)
-        BEQ +                   ;
-        LDA #$FF                ;
-*       STA Tmp3                ;
         LDX #$02                ;
         LDY #$00                ;
 DLIBitRow:
-        LDA RowHP3+1,Y          ;
-        AND Tmp3                ;
-        BNE DLIOn               ;
         CPY #DLG_FIRST-1        ;
         BEQ DLIOn               ;
         LDA BattleOn            ;
@@ -1702,7 +1646,6 @@ VBI:
         STA HSCROL              ;
         LDA ShV                 ;
         STA VSCROL              ;
-        STA VScrolNow           ;(For the DLI, which works out its row.)
         EOR #$FF                ;VCOUNT on the last line above the dialog
         SEC                     ;window (its rows' set): (16 + 18 * 8 - 1 -
         ADC #FIRST_LINE+DLG_FIRST*8-1 ;VSCROL) / 2.
@@ -1713,12 +1656,6 @@ VBI:
         LDA POT1                ;
         STA PotY                ;
         STA POTGO               ;Start the next stick scan.
-        LDA RowHP3              ;(0: as it is.)
-        BEQ +                   ;
-        STA HPOSP3              ;
-        LDA RowC3               ;
-        STA COLPM3              ;
-*
 .include "profile_start.asm"
         JSR UpdateSound         ;
 .include "profile_end.asm"

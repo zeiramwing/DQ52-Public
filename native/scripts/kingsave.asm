@@ -1,11 +1,12 @@
 ;Test script: as king.asm, then YES to recording the deeds (and a press
 ;past their message): the password in its window, until a button (its
-;first character as tools/native/password.py has it for a new hero).
+;first character as tools/native/password.py has it for this hero: 15
+;HP, the name LOTO, the throne room left).
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
 ;START: 1,7,8
 ;FIGHT: 254
-;EXPECT-BYTE: PwChars 28
+;EXPECT-BYTE: PwChars 31
 ;EXPECT-BYTE: ShopState 47
 
 Script:

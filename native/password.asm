@@ -2,28 +2,33 @@
 ;battery-backed RAM), so the King shows a password when he records the
 ;hero's deeds, and holding the upper fire button at power-on asks for one.
 ;
-;A password holds the experience and gold, the items, keys and herbs, the
-;equipment, the flags (ModFlags) and the curses (Flags2): 11 bytes, then a check byte (CRC-8,
-;polynomial $07, from $5A), the 11 scrambled by a sequence started from
-;the check (each next = the last * 5 + $3B) so that like adventures do
-;not look alike. Its 96 bits, then 4 more of 0, are 20 characters of 5
-;bits: A-Z, then 2-7. The level and its stats come back from the
-;experience, HP and MP full, as the game's own logs bring them back. (The
-;name is not kept: the name window asks for it after a password.)
+;A password holds all the game's own log keeps: the experience and gold,
+;the items, keys and herbs, the equipment, the flags (ModFlags), what is
+;worn and the curses (Flags2), the HP and MP, and the name (its 8
+;characters, 5 bits each): 19 bytes, then a check byte (CRC-8, polynomial
+;$07, from $5A), the 19 scrambled by a sequence started from the check
+;(each next = the last * 5 + $3B) so that like adventures do not look
+;alike. Its 160 bits are 32 characters of 5 bits: A-Z, then 2-7, shown
+;and entered in two rows of 16, 4 at a time. The level and its stats
+;come back from the experience and the name, as the game's do.
 
-.alias PwBuf            $0780   ;13: the bytes (the last a pad of 0),
-.alias PwChars          $0790   ;20: the characters (0-31),
+.alias PwBuf            $3B00   ;20: the bytes (in the RAM the people's frames had),
+.alias PwChars          $3B20   ;32: the characters (0-31),
 .alias PwLen            $07A4   ;how many are entered,
 .alias PwCur            $07A5   ;the entry grid's cursor (0-31),
 .alias PwKey            $07A6   ;the scrambling sequence (and a frame's column),
 .alias PwT1             $07A7   ;temporaries.
 .alias PwT2             $07A8   ;
 .alias PwW              $07A9   ;A frame's width inside.
-.alias PW_LEN           20      ;
+.alias PW_LEN           32      ;
+.alias PW_BODY          19      ;The bytes before the check.
+.alias PW_WIDTH         21      ;The King's window inside: 16 characters, 3 gaps, a column each side.
+.alias PwHP             $3B40   ;The password's HP and MP, until the stats are.
+.alias PwMP             $3B41   ;
 .alias PW_SHOW          $F7     ;The King's step (maps.py), after the deeds are
 .alias PW_WAIT          47      ;recorded; a button then closes it.
-.alias PW_ROW           1       ;Where the King shows it: rows 1-3,
-.alias PW_COL           5       ;columns 5-26.
+.alias PW_ROW           1       ;Where the King shows it: rows 1-4,
+.alias PW_COL           5       ;columns 5-27.
 .alias EN_ROW           6       ;The entry window: rows 6-13, columns 4-27:
 .alias EN_COL           4       ;the characters entered on row 7, the grid
 .alias EN_GRID          9       ;(8 a row, 2 columns each) on rows 9-12.

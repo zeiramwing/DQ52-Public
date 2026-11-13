@@ -309,42 +309,9 @@ StepFieldDead:
 
 ;--------------------------------------[The Dragonlord]----------------------------------------------
 
-.alias LORD_SLOT        5       ;The graphic he has (the wizard's, elsewhere).
-.alias GFX_PEOPLE       $8100   ;GFX_BANK: the people's frames,
-.alias GFX_COLORS       $88E0   ;their colors (PersonColors's), the lord's,
-.alias GFX_LORD         $8900   ;and his frames;
 .alias GFX_HERO         $9C00   ;the hero's frames (ShowHero),
 .alias GFX_ANIM         $8B00   ;the townspeople's other step (LoadAnim),
 .alias GFX_SETB         $9800   ;set B (LoadSetB).
-
-;At a map's load: in his floor the Dragonlord's figure and color in the
-;wizard's slot (the game's ChkDrgnLordNPC), elsewhere the wizard's.
-SetLordGfx:
-        LDA #GFX_BANK           ;
-        JSR SelectBank          ;
-        LDX #LORD_SLOT          ;
-        LDY #<[GFX_PEOPLE+LORD_SLOT*128] ;
-        LDA #>[GFX_PEOPLE+LORD_SLOT*128] ;
-        PHA                     ;
-        LDA MapId               ;
-        CMP #CASTLE_BF          ;
-        BNE +                   ;
-        LDX #8                  ;
-        LDY #<GFX_LORD          ;
-        PLA                     ;
-        LDA #>GFX_LORD          ;
-        PHA                     ;
-*       LDA GFX_COLORS,X        ;
-        STA PersonColors+LORD_SLOT ;
-        STY SrcPtr              ;
-        PLA                     ;
-        STA SrcPtr+1            ;
-        LDY #127                ;
-*       LDA (SrcPtr),Y          ;
-        STA PeopleGfx+LORD_SLOT*128,Y ;
-        DEY                     ;
-        BPL -                   ;
-        RTS                     ;
 
 .alias LORD_FIGHT       $F0     ;His dialog's steps (maps.py: as a shop's
 .alias LORD_JOIN        $F1     ;control byte).
@@ -418,6 +385,7 @@ StepLordEnd:
 ;--------------------------------------[Battles in a castle]-----------------------------------------
 
 .alias SavedPeople      $0289   ;PeopleOn through a battle.
+.alias CondI            $07D1   ;CondPeople's.
 
 ;A battle off the overworld: the people out of sight (none drawn, their
 ;players cleared), and a lit map drawn black round the window, as a cave's
@@ -429,7 +397,6 @@ TownBattle:
         STA SavedPeople         ;
         LDA #$00                ;
         STA PeopleOn            ;
-        JSR ClearPlayers        ;
         LDA Dark                ;
         BNE +                   ;
         LDA #$80                ;
@@ -446,8 +413,6 @@ TownBattleEnd:
         BEQ +                   ;
         LDA SavedPeople         ;
         STA PeopleOn            ;
-        LDA #$01                ;
-        STA PeopleDirty         ;
         LDA Dark                ;
         BPL +                   ;
         LDA #$00                ;
@@ -526,10 +491,9 @@ RainMan:
         JMP ShopEnd             ;
 *       LDA #ITM_HARP           ;The harp taken, and he goes (the only one
         JSR RemoveItem          ;there: no one left on the map).
+        JSR CondHere            ;(His block what was under him.)
         LDA #$00                ;
         STA PeopleOn            ;
-        JSR ClearPlayers        ;
-        JSR DLIBits             ;
         LDA #<RainTalk          ;What he says.
         LDY #>RainTalk          ;
         JMP SayList             ;
@@ -756,6 +720,55 @@ GuardianWon:
 .alias KING_GW          $F6     ;(dialogs' $FFFB).
 .alias KING_GFX         4       ;The King's figure (the throne room's only one).
 .alias ITM_LOVE         $08     ;Her keepsake, the King's gift.
+
+;At a map's load, after its people: each of those who come and go
+;(convert.py's COMES_AND_GOES, drawn in the background) who is not there
+;now (its ModFlags bit as CondWhen says) has its block put back to what
+;was under it, and is out of TALK's reach.
+CondPeople:
+        LDX #NUM_CONDS-1        ;
+CondNext:
+        LDA CondMap,X           ;
+        CMP MapId               ;
+        BNE CondSkip            ;
+        LDA CondFlag,X          ;(No bit: there at every load.)
+        BEQ CondSkip            ;
+        AND ModFlags            ;
+        BEQ +                   ;
+        LDA #$FF                ;
+*       EOR CondWhen,X          ;
+        BNE CondSkip            ;
+        STX CondI               ;
+        JSR CondGone            ;
+        LDX CondI               ;
+CondSkip:
+        DEX                     ;
+        BPL CondNext            ;
+        RTS                     ;
+;Entry X's person gone: its block what was under it, and the person (if
+;loaded) off the map.
+CondGone:
+        LDA CondX,X             ;
+        STA BX                  ;
+        LDA CondY,X             ;
+        STA BY                  ;
+        LDA CondUnder,X         ;
+        PHA                     ;
+        JSR PersonAt            ;(First: SetBlock's drawing moves BX, BY.)
+        BCC +                   ;
+        LDA #$FF                ;
+        STA PersonX,X           ;
+*       PLA                     ;
+        JMP SetBlock            ;
+;The staff of rain's old man going: his entry, by the map.
+CondHere:
+        LDX #NUM_CONDS-1        ;
+*       LDA CondMap,X           ;
+        CMP MapId               ;
+        BEQ CondGone            ;
+        DEX                     ;
+        BPL -                   ;
+        RTS                     ;
 
 ;At a map's load: in the swamp cave, once she is carried or home, her
 ;block is floor (GetBlockID).
