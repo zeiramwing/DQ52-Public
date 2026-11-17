@@ -29,3 +29,7 @@ RouteDone:
 ;and steps, ending with 0 steps.
 Route:
         .byte $08, 10, $01, 8, $02, 10, $04, 6, $08, 6, $01, 4, $00, 0
+
+;The keypad's Reset: nothing to keep here.
+ResetHook:
+        RTS                     ;

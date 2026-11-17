@@ -446,7 +446,10 @@ ListButtons:
         BNE ListChosen          ;
 *       LDA Pressed             ;
         AND #BTN_A              ;
-        BNE ListChosen          ;
+        BEQ ListNone            ;
+        JSR Beep                ;(A choice: the menu button's sound.)
+        JMP ListChosen          ;
+ListNone:
         RTS                     ;
 ListChosen:
         JSR CloseList           ;
@@ -646,8 +649,9 @@ StepStart:
         STA BuyLo               ;
         STA BuyHi               ;
         LDA ShopCtl             ;
-        CMP #LORD_FIGHT         ;The Dragonlord's (castle.asm).
-        BCC +                   ;
+        CMP #LORD_FIGHT         ;The special characters' (poweron.asm, in
+        BCC +                   ;MSG_BANK).
+        JSR SelectMsg           ;
         JMP LordStep            ;
 *       STA ShopIdx             ;
         CMP #$07                ;
@@ -730,7 +734,7 @@ StepWPrice:
         STA BuyHi               ;
         LDA SelItem             ;
         CMP #$07                ;
-        BCS +                   ;
+        BCS StepWPriceNext      ;
         LDA Equipped            ;
         LSR                     ;
         LSR                     ;
@@ -741,6 +745,7 @@ StepWPrice:
         SEC                     ;
         SBC #$01                ;
         JMP WOld                ;
+StepWPriceNext:
 *       CMP #14                 ;
         BCS +                   ;
         LDA Equipped            ;
@@ -785,7 +790,7 @@ StepWOk:
         JMP ShopSay             ;
 *       LDA SelItem             ;Equip it.
         CMP #$07                ;
-        BCS +                   ;
+        BCS StepWOkNext         ;
         CLC                     ;
         ADC #$01                ;
         ASL                     ;
@@ -797,6 +802,7 @@ StepWOk:
         LDA Equipped            ;
         AND #$1F                ;
         JMP WEquip              ;
+StepWOkNext:
 *       CMP #14                 ;
         BCS +                   ;
         SEC                     ;
@@ -1036,7 +1042,8 @@ StepIAsked:
         LDX #I_SLEEP            ;
         JMP ShopSay             ;
 StepISleep:
-        LDA #$01                ;The screen off (the VBI's DMACTL).
+        JSR FadeOut             ;Faded out (the game's), then the screen
+        LDA #$01                ;off (the VBI's DMACTL).
         STA Loading             ;
         LDA #MSC_INN            ;
         JSR PlayMusic           ;
@@ -1053,8 +1060,9 @@ StepIWait:
         DEC SleepTime           ;
         BEQ +                   ;
         RTS                     ;
-*       LDA #$00                ;Morning.
+*       LDA #$00                ;Morning: faded in.
         STA Loading             ;
+        JSR FadeIn              ;
         JSR PlayMapMusic        ;
         JSR RedrawStatus        ;
         LDA #$06                ;The morning after a night at the inn
@@ -1121,7 +1129,7 @@ StepItPick:
         LDX #$00                ;
         JMP ShopOpen            ;
 *       CMP #WINGS_ITEM         ;
-        BNE +                   ;
+        BNE WingsUseNext        ;
         LDA Dark                ;Not in a dungeon, nor the Dragonlord's
         BNE WingsFail           ;floor (the game's WingsFail).
         LDA MapId               ;
@@ -1132,11 +1140,15 @@ WingsFail:
         LDX #$00                ;
         JMP ShopOpen            ;
 WingsUse:
+        LDA #FX_SPELL           ;(The screen grey and back, as for a spell.)
+        LDX #40                 ;
+        JSR StartFx             ;
         LDA #WINGS_ITEM-ITM_BASE ;
         JSR RemoveItem          ;
         LDA #$39                ;The wings used.
         LDX #IT_WINGS           ;
         JMP ShopOpen            ;
+WingsUseNext:
 *       CMP #LOVE_ITEM          ;The princess's keepsake (castle.asm).
         BNE +                   ;
         JMP LoveUse             ;
@@ -1153,8 +1165,9 @@ WingsUse:
         BEQ +                   ;
         LDY #F2_NECK            ;
         CMP #NECK_ITEM          ;
-        BNE ++                  ;
+        BNE WingsUseNext2       ;
 *       JMP WearCursed          ;
+WingsUseNext2:
 *       CMP #SCALE_ITEM         ;
         BNE +                   ;
         JSR WearScale           ;
@@ -1192,8 +1205,10 @@ UseTorch:
         STA Mode                ;
         JMP RedrawLight         ;
 
-;The wings: back beside Tantegel.
+;The wings: back beside Tantegel, with their sound.
 StepItWings:
+        LDA #SFX_WINGS          ;
+        JSR PlaySFX             ;
         LDA #$00                ;
         STA ShopState           ;
         STA DialogOn            ;
@@ -1220,7 +1235,8 @@ HealAdd:
         ADC HitPoints           ;
         BCS +                   ;
         CMP MaxHP               ;
-        BCC ++                  ;
+        BCC HealAddNext         ;
 *       LDA MaxHP               ;
+HealAddNext:
 *       STA HitPoints           ;
         JMP RedrawStatus        ;

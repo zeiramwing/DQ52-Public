@@ -6,6 +6,7 @@
 ;FIGHT: 254
 ;EXPECT-BYTE: HeroX 44
 ;EXPECT-BYTE: Paused 0
+;EXPECT-BYTE: FadeSub 0
 ;EXPECT-BYTE: Mode 0
 
 Script:

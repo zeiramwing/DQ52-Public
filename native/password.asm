@@ -67,6 +67,7 @@ TitleShow:
         LDA #PEOPLE_BANK        ;
         JSR SelectBank          ;
         LDX #$00                ;
+TitleShowLoop:
 *       LDA TITLE_AT,X          ;
         STA CharsetA,X          ;
         LDA TITLE_AT+$100,X     ;
@@ -84,12 +85,39 @@ TitleShow:
         LDA TITLE_AT+$700,X     ;
         STA CharsetB+$300,X     ;
         INX                     ;
-        BNE -                   ;
+        BNE TitleShowLoop       ;
         LDX #$04                ;
 *       LDA TITLE_AT+$800+896,X ;
         STA MapColors,X         ;
         DEX                     ;
         BPL -                   ;
+        LDX #TITLE_BANDS*5-1    ;Its bands' colors (TitleDLI's), to RAM.
+TitleBandCopy:
+        LDA TITLE_AT+$800+896+5,X ;
+        STA TitleBands,X        ;
+        DEX                     ;
+        BPL TitleBandCopy       ;
+        LDA #$FF                ;The hero's lines out of players 0 and 1
+        STA Shown               ;(else he showed beside the dragon), and
+        LDX #15                 ;drawn again when the title is gone.
+        LDA #$00                ;
+TitleHeroOff:
+        STA Player0+HERO_LINE,X ;
+        STA Player1+HERO_LINE,X ;
+        DEX                     ;
+        BPL TitleHeroOff        ;
+        LDX #TITLE_SPR_H-1      ;Its sprites (build.py's, from the ROM's) as
+TitleSprCopy:                   ;players 0 and 1, black (SetHardware), in
+        LDA TITLE_SPR_AT,X      ;front of the banner.
+        STA Player0+TITLE_SPR_TOP,X ;
+        LDA TITLE_SPR_AT+TITLE_SPR_H,X ;
+        STA Player1+TITLE_SPR_TOP,X ;
+        DEX                     ;
+        BPL TitleSprCopy        ;
+        LDA #TITLE_SPR_X        ;
+        STA HPOSP0              ;
+        LDA #TITLE_SPR_X+8      ;
+        STA HPOSP1              ;
         LDA #<[TITLE_AT+$800]   ;
         STA DstPtr              ;
         LDA #>[TITLE_AT+$800]   ;
@@ -104,6 +132,12 @@ TitleRow:
         INY                     ;
         CPY #32                 ;
         BNE -                   ;
+        LDY #$00                ;The normal playfield's columns beside it
+        LDX #$FB                ;(-5 to -1, 32 to 36): the row's 2-cell
+        JSR TitleSide           ;pattern carried on, in step, from its first
+        LDY #30                 ;two cells to the left and its last two to
+        LDX #32                 ;the right (the background there in every
+        JSR TitleSide           ;row, the logo's too).
         LDA DstPtr              ;
         CLC                     ;
         ADC #32                 ;
@@ -115,10 +149,38 @@ TitleRow:
         CMP #28                 ;
         BNE TitleRow            ;
         JMP SelectMsg           ;
+;5 cells of the title's row from column X, its cells Y and Y + 1 in turn.
+TitleSide:
+        STX WinCol              ;
+        STY Tmp                 ;
+        LDX #$05                ;
+TitleSideCell:
+        LDA WinCol              ;Cell Y or Y + 1, as the column is even or
+        AND #$01                ;odd (the pattern's step).
+        CLC                     ;
+        ADC Tmp                 ;
+        TAY                     ;
+        LDA (DstPtr),Y          ;
+        JSR PutChar             ;
+        INC WinCol              ;
+        DEX                     ;
+        BNE TitleSideCell       ;
+        RTS                     ;
 TitleEnd:
-        JSR BuildDList          ;(Mode 4 rows again.)
+        LDX #TITLE_SPR_H-1      ;Its sprites gone from the players (the
+        LDA #$00                ;hero's lines are theirs again).
+TitleSprClear:
+        STA Player0+TITLE_SPR_TOP,X ;
+        STA Player1+TITLE_SPR_TOP,X ;
+        DEX                     ;
+        BPL TitleSprClear       ;
+        LDA #$00                ;The hero out of sight until the game
+        JSR HeroAt              ;starts (his players were the dragon's,
+        JSR BuildDList          ;by the menu's window). (Mode 4 rows again.)
         JSR LoadSetB            ;
         JSR TownBattleEnd       ;The map's sets and colors back, for the
+        LDA #$01                ;(Quietly: no music, no fade in, the screen
+        STA QuietLoad           ;left off until the menu is up.)
         LDA MapId               ;windows, but the people off, the hero still
         JSR LoadMap             ;out of sight (the screen is then made
         JMP TownBattle          ;blank: the start menu's).
@@ -130,15 +192,38 @@ GameStart:
         LDA MapId               ;
         JMP LoadMap             ;
 
-;The title's interrupt, above its text rows (mode 2): set B, its colors.
+;The title's interrupts, on the row before each of its bands (borders,
+;banner, each line of text: each drawn in one NES palette): the band's
+;set (A, or B for the mode 2 text rows) and colors, from TitleBands
+;(build.py's title_bytes, from the ROM's attribute rows).
+.alias TITLE_SPR_AT     TITLE_AT+$800+896+5+TITLE_BANDS*5 ;Its sprites, as players.
+.alias TitleBands       $3C00   ;5 bytes a band: the row before it, set B (1) or A, COLPF0-2.
+.alias TitleBand        $07F3   ;The next band's offset in them (the VBI's 0).
 TitleDLI:
         PHA                     ;
-        LDA #>CharsetB          ;
-        STA WSYNC               ;
+        TXA                     ;
+        PHA                     ;
+        TYA                     ;
+        PHA                     ;
+        LDX TitleBand           ;
+        LDY TitleBands+1,X      ;
+        LDA TitleSets,Y         ;
+        LDY TitleBands+4,X      ;(COLPF2 first: the text rows' background,
+        STA WSYNC               ;from the line's left edge.)
         STA CHBASE              ;
-        LDA #TITLE_LUM          ;
+        STY COLPF2              ;
+        LDA TitleBands+3,X      ;
         STA COLPF1              ;
-        LDA #$00                ;
-        STA COLPF2              ;
+        LDA TitleBands+2,X      ;
+        STA COLPF0              ;
+        TXA                     ;
+        CLC                     ;
+        ADC #$05                ;
+        STA TitleBand           ;
+        PLA                     ;
+        TAY                     ;
+        PLA                     ;
+        TAX                     ;
         PLA                     ;
         RTI                     ;
+TitleSets:      .byte >CharsetA, >CharsetB

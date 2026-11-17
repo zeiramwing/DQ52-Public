@@ -52,4 +52,5 @@ ReadInput:
         STA Stick               ;
 *
 StickDone:
+ResetHook:                      ;(The keypad's Reset: nothing to keep here.)
         RTS                     ;

@@ -2,7 +2,7 @@
 """Build the native 5200 engine's cartridge: a 512KB SuperCart (atari800
 cartridge type 74).
 
-Usage: build.py ROM OUTDIR [--autopilot | --script NAME] [--start MAP,X,Y] [--fight N] [--gold N] [--keys N] [--item N[,N...]] [--level N] [--exp N] [--equip N] [--flags N] [--hurt N] [--name-entry] [--profile]
+Usage: build.py ROM OUTDIR [--autopilot | --script NAME] [--start MAP,X,Y] [--fight N] [--gold N] [--keys N] [--item N[,N...]] [--level N] [--exp N] [--equip N] [--flags N] [--hurt N] [--drain N] [--seed N] [--name-entry] [--fade] [--profile]
 
 Converts the game's data (convert.py), then assembles native/main.asm with
 it into the first half of every bank, and puts the data banks' second
@@ -12,7 +12,7 @@ walks a fixed route, then the program parks for run5200.py); --script
 NAME takes its controller input from native/scripts/NAME.asm. --start puts
 the hero on map MAP (0 the overworld, then maps.TOWNS) at block X, Y;
 --fight N makes every step on the overworld start a fight with enemy N;
---gold N gives the new hero N gold, --keys N magic keys, --item N[,N...] items (their ITM_ codes); --level N a hero of that level (HP and MP full), --exp N with N experience, --equip N wearing equipment byte N, --flags N with ModFlags N, --hurt N with N HP fewer than the most; --name-entry asks for the name at power-on (as the stick build does); --profile times the sound in the VBI
+--gold N gives the new hero N gold, --keys N magic keys, --item N[,N...] items (their ITM_ codes); --level N a hero of that level (HP and MP full), --exp N with N experience, --equip N wearing equipment byte N, --flags N with ModFlags N, --hurt N with N HP fewer than the most, --drain N N MP fewer, --seed N each battle's random numbers from N; --name-entry asks for the name at power-on (as the stick build does); --profile times the sound in the VBI
 (ProfMax, ProfSum, ProfFrames: line pairs, 228 cycles each).
 """
 import os
@@ -159,19 +159,39 @@ CREDIT_UNIT = 8                         # Credits' waits: in 8 frames.
 CREDIT_EVENT = 64                       # A music timing event, in frames (about).
 
 
+CR_SCREENS = 19
+CR_PICTURES = {17: range(0x10, 0x23), 18: range(0x3E, 0x56)}   # Screen: its tiles.
+CR_GLYPHS_AT = 0x2000 + (convert.TEXT_BASE_CODE + len(convert.DIGITS)) * 8
+
+
 def credits_bytes(rom_path):
     """The end credits (DoEndCredits' EndCreditDat, read from the ROM): its
-    18 screens, each a wait (CREDIT_UNIT frames; the game's music timing
-    events, CREDIT_EVENT frames each), then its rows of text, each row,
-    column, length and text tiles; $FF ends a screen, $FE them all. The
-    attribute writes are left out, as is the credits' own blank ($60) and
-    mark ($61), which become the text blank."""
+    19 screens, each a wait (CREDIT_UNIT frames; the game's music timing
+    events, CREDIT_EVENT frames each; 160 frames for the last, which
+    stays), then its rows of text, each row, column, length and text tiles;
+    $FF ends a screen, $FE them all. The attribute writes are left out, as
+    is the credits' own blank ($60) and mark ($61), which become the text
+    blank. The last two screens are pictures, the publisher's mark and the
+    closing banner, of tiles of the CHR bank the credits load (bank 0), not
+    the text's: each screen's begins with $FD, their count and their
+    characters, squeezed in the text's color (as set A's text is), which
+    go over the capitals' (CR_GLYPHS_AT; neither screen has any), and the
+    tiles become the capitals'."""
     rom = convert.romdata.Rom(rom_path)
     data = rom.table("EndCreditDat", 1400)
     at, out, screen = 0, bytearray(), 0
+    ink = convert.color_plan(rom, rom.chr, "TownPal")[2][0][1]
+
+    def picture(scr):
+        out.append(0xFD)
+        out.append(len(CR_PICTURES[scr]))
+        for t in CR_PICTURES[scr]:
+            px = convert.colordata.tile_pixels(rom.chr, 0, t)
+            out.extend(convert.colordata.squeeze_tile([[ink if c else 0 for c in row] for row in px]))
     events = [8, 2, 3, 3, 3] + [2] * 9 + [3] * 4      # (DoEndCredits' waits.)
-    out.append(events[0] * CREDIT_EVENT // CREDIT_UNIT)
-    while screen < 18:
+    waits = [e * CREDIT_EVENT // CREDIT_UNIT for e in events] + [160 // CREDIT_UNIT]
+    out.append(waits[0])
+    while screen < CR_SCREENS:
         addr = data[at] | data[at + 1] << 8
         at += 2
         tiles = []
@@ -188,12 +208,17 @@ def credits_bytes(rom_path):
         if addr < 0x23C0:
             row, col = divmod(addr - 0x2000, 32)
             tiles = [0x5F if t in (0x60, 0x61) else t for t in tiles]
+            if screen in CR_PICTURES:
+                pics = CR_PICTURES[screen]
+                tiles = [convert.UPPER[pics.index(t)] if t in pics else t for t in tiles]
             out += bytes([row, col, len(tiles)] + tiles)
         if b == 0xFD:
             out.append(0xFF)
             screen += 1
-            if screen < 18:
-                out.append(events[screen] * CREDIT_EVENT // CREDIT_UNIT)
+            if screen < CR_SCREENS:
+                out.append(waits[screen])
+                if screen in CR_PICTURES:
+                    picture(screen)
     out.append(0xFE)
     return bytes(out)
 
@@ -230,8 +255,11 @@ def title_bytes(rom_path):
             blocks.append(([nt[t], nt[t + 1], nt[t + 32], nt[t + 33]], attr & 3))
     pal = rom.table("IntroPalTbl2", 12)
     chr_rom = rom.chr
-    plan = convert.colordata.map_plan(chr_rom, blocks, pal, bank=0)
-    pal, src, slot, inv = plan
+    # Each band of rows the NES draws in one palette (borders, banner,
+    # each line of text: its attribute rows are uniform), so its pixels keep
+    # their NES color numbers (1-3: COLPF0-2) and each band gets its own
+    # palette's colors (TitleDLI, at its first row: TITLE_BANDS).
+    slot, inv = [[0, 1, 2, 3]] * 4, [0] * 4
     chars, codes = convert.block_chars(chr_rom, blocks, range(len(blocks)), slot, inv, bank=0)
     if len(chars) > 128:
         sys.exit(f"build: the title has {len(chars)} characters, more than 128")
@@ -260,10 +288,104 @@ def title_bytes(rom_path):
             grid.append(four[(row & 1) * 2 + (col & 1)])
     if len(text_chars) > 128:
         sys.exit(f"build: the title's text has {len(text_chars)} characters, more than 128")
-    pf = [convert.colordata.NES_TO_ATARI[pal[(i // 4) * 3 + i % 4 - 1]] for i in src]
+    atari = convert.colordata.NES_TO_ATARI
+    def band_of(row):                   # Screen row -> (palette, text row).
+        return blocks[((row + 1) // 2) * 16][1], row > last
+    def band_colors(p, text):
+        if not text:
+            return [atari[pal[p * 3 + k]] for k in range(3)]
+        # Mode 2: the text's luminance in COLPF1 on black (COLPF2).
+        used = {v for col in range(32) for v in colors_of(nt[(1 + 1 + last) * 32 + col])} or {1}
+        return [0, max(atari[pal[p * 3 + max(used) - 1]] & 0x0F, 0x08), 0]
+    bands, prev = [], None
+    for row in range(TITLE_ROWS):
+        b = band_of(row)
+        if b != prev:
+            bands.append((row,) + b)
+            prev = b
+    first = band_colors(bands[0][1], bands[0][2])
+    table = bytearray()
+    for row, p, text in bands[1:]:      # Each later band: the row before it, set B
+        table += bytes([row - 1, int(text)] + band_colors(p, text))   # or A, COLPF0-2.
+    pf = first + [0x00]
+    # Its sprites (DrgSprites: 9 of them, in the sprites' pattern table,
+    # CHR half 3, which the title maps there: Bank3ToNT1): one color, so as players 0-2 in front of the banner,
+    # each pair of NES pixels one player pixel (a color clock), their line
+    # the screen's as the background's (NES line L at line L + 8: the
+    # title's rows start a row down, after the 16 lines above the first
+    # row; a sprite's line is its Y + 1).
+    sprites = [tuple(rom.read(2, 0xBE0B + 4 * k, 4)) for k in range(9)]
+    pixels = {}
+    for y, tile, attr, x in sprites:
+        for ty, row in enumerate(convert.colordata.tile_pixels(chr_rom, 3, tile)):
+            for tx, v in enumerate(row):
+                if v:
+                    px = 7 - tx if attr & 0x40 else tx
+                    py = 7 - ty if attr & 0x80 else ty
+                    pixels[(x + px) // 2, y + 1 + py + 8] = 1
+    cols = [c for c, _ in pixels]
+    lines = [l for _, l in pixels]
+    left, top = min(cols), min(lines)
+    height = max(lines) - top + 1
+    players = (max(cols) - left) // 8 + 1
+    if players > 2:                     # (TitleShow draws players 0 and 1.)
+        sys.exit("build: the title's sprites are wider than 2 players")
+    dragon = bytearray(height * players)
+    for (c, l) in pixels:
+        k = (c - left) // 8
+        dragon[k * height + l - top] |= 0x80 >> ((c - left) % 8)
     lum = max(set(lums), key=lums.count) if lums else 0x0E
     return (b"".join(chars).ljust(0x400, b"\0") + b"".join(text_chars).ljust(0x400, b"\0")
-            + bytes(grid) + bytes(pf + [0x00])), last + 1, max(lum, 0x08)
+            + bytes(grid) + bytes(pf + [0x00]) + bytes(table) + bytes(dragon)), last + 1, max(lum, 0x08), \
+        len(bands) - 1, (top, height, 0x40 + left, players)
+
+
+def window_rows(rom, addr):
+    """A window's text rows (the game's window data, in bank 1: a 6 byte
+    header, then tiles; $80-$87 blanks, $88-$8F border tiles, a count of 0
+    to the row's end): each row's tiles from its first letter, and that
+    column."""
+    data = rom.read(1, addr, 256)
+    height, width = data[1], data[2]
+    rows, row, i = [], [], 6
+    while len(rows) < height * 2 and i < len(data):
+        b = data[i]
+        i += 1
+        if b >= 0x80:
+            kind, n = b >> 3 & 0x0F, b & 7
+            row += [None] * ((width - len(row)) if n == 0 else n) if kind in (0, 1) else [None]
+        else:
+            row.append(b)
+        while len(row) >= width:
+            rows.append(row[:width])
+            row = row[width:]
+    out = []
+    for r in rows:
+        cols = [k for k, t in enumerate(r) if t is not None]
+        if cols:
+            out.append(([0x5F if t is None else t for t in r[cols[0]:cols[-1] + 1]], cols[0]))
+    return out
+
+
+def menu_words(rom):
+    """The start menu's words, the game's own (FullMenuDat: continue, change
+    the message speed, begin a new quest; MsgSpeedDat: the three speeds, its
+    rows set in from the question's), as menuwords.asm: rows padded to
+    ME_LEN and SPEED_LEN."""
+    full = [t for t, _ in window_rows(rom, 0xB249)][:3]
+    speeds = [t for t, c in window_rows(rom, 0xB194) if c > 1][:3]
+    if len(full) < 3 or len(speeds) < 3:
+        sys.exit("build: the start menu's words not found")
+    me_len = max(len(r) for r in full)
+    sp_len = max(len(r) for r in speeds)
+    lines = [";Generated by tools/native/build.py from the ROM's window data.",
+             f".alias ME_LEN           {me_len}",
+             f".alias SPEED_LEN        {sp_len}",
+             f".alias ME_COL           {(32 - (me_len + 3)) // 2}"]
+    out = "\n".join(lines) + "\n"
+    out += convert.asm_bytes("MenuWords", bytes(t for r in full for t in r + [0x5F] * (me_len - len(r))))
+    out += convert.asm_bytes("SpeedText", bytes(t for r in speeds for t in r + [0x5F] * (sp_len - len(r))))
+    return out
 
 
 def script_bytes(path):
@@ -322,6 +444,16 @@ def main():
         i = args.index("--gold")
         gold = int(args[i + 1])
         del args[i:i + 2]
+    seed = 0
+    if "--seed" in args:
+        i = args.index("--seed")
+        seed = int(args[i + 1])
+        del args[i:i + 2]
+    drain = 0
+    if "--drain" in args:
+        i = args.index("--drain")
+        drain = int(args[i + 1])
+        del args[i:i + 2]
     hurt = 0
     if "--hurt" in args:
         i = args.index("--hurt")
@@ -356,6 +488,7 @@ def main():
     # The name window at power-on: in the stick build, and in a test that
     # asks for it (--name-entry); other tests start with NAME.
     name_entry = "--name-entry" in args or not (autopilot or script)
+    map_fade = "--fade" in args or not (autopilot or script)   # (Test builds: no fades, but ;FADE.)
     if autopilot:
         fight = 0xFE                    # The measurement walks: no fights.
     args = [a for a in args if not a.startswith("--")]
@@ -376,7 +509,7 @@ def main():
         f.write(PROFILE_MACROS if profile else PROFILE_EMPTY)
     with open(os.path.join(out, "profile_code.asm"), "w") as f:
         f.write(PROFILE_CODE if profile else "")
-    title, title_text, title_lum = title_bytes(rom_path)
+    title, title_text, title_lum, title_bands, title_sprites = title_bytes(rom_path)
     # A test script goes in MSG_BANK after the messages (SCRIPT_AT).
     script_data = script_bytes(os.path.join(ROOT, "native", "scripts", script + ".asm")) if script else b""
     script_at = 0x8000 + os.path.getsize(os.path.join(out, "messages.bin"))
@@ -386,14 +519,19 @@ def main():
         f.write(f".alias SCRIPT_AT        ${script_at:04X}\n")
         f.write(f".alias OVERLAY_AT       ${OVERLAY_AT:04X}\n")
         f.write(f".alias CREDITS_AT       ${CREDITS_AT:04X}\n")
+        f.write(f".alias CR_GLYPHS_AT     ${CR_GLYPHS_AT:04X}\n")
         f.write(f".alias TITLE_AT         ${TITLE_AT:04X}\n")
         f.write(f".alias TITLE_TEXT       {title_text}\n")
         f.write(f".alias TITLE_LUM        ${title_lum:02X}\n")
+        f.write(f".alias TITLE_BANDS      {title_bands}\n")
+        for name, v in zip(("TITLE_SPR_TOP", "TITLE_SPR_H", "TITLE_SPR_X", "TITLE_SPR_N"), title_sprites):
+            f.write(f".alias {name:16s} {v}\n")
         f.write(f".alias START_MAP        {start_map}\n")
         f.write(f".alias FIGHT_ENEMY      ${fight:02X}\n")
         f.write(f".alias START_GOLD       {gold}\n")
         f.write(f".alias START_KEYS       {keys}\n")
         f.write(f".alias NAME_ENTRY       {int(name_entry)}\n")
+        f.write(f".alias MAP_FADE         {int(map_fade)}\n")
         inv = bytearray(4)                      # Two items a byte (the low nibble first).
         for k, v in enumerate(items):
             inv[k // 2] |= v << (4 * (k & 1))
@@ -405,6 +543,9 @@ def main():
         f.write(f".alias START_EQUIP      {equip}\n")
         f.write(f".alias START_FLAGS      {flags}\n")
         f.write(f".alias START_HURT       {hurt}\n")
+        f.write(f".alias START_DRAIN      {drain}\n")
+        f.write(f".alias BATTLE_SEEDED    {int(seed != 0)}\n")
+        f.write(f".alias BATTLE_SEED      {seed}\n")
         for label, v in zip(("START_STR", "START_AGI", "START_HP", "START_MP"), stats):
             f.write(f".alias {label:16s} {v}\n")
         f.write(f".alias START_X          {start[0]}\n")
@@ -414,6 +555,8 @@ def main():
         f.write(f".alias BLK_WATER        ${convert.WATER_BLOCKS[0]:02X}\n")
     with open(os.path.join(out, "name.asm"), "w") as f:
         f.write(convert.asm_bytes(None, tiles(NAME.ljust(8))))
+    with open(os.path.join(out, "menuwords.asm"), "w") as f:
+        f.write(menu_words(convert.romdata.Rom(rom_path)))
     with open(os.path.join(out, "strings.asm"), "w") as f:
         f.write(";Generated by tools/native/build.py.\n")
 

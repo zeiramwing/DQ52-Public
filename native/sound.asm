@@ -17,7 +17,7 @@
 ;the triangle on channel 4 (8 bits at 64kHz), all pure tones but the
 ;noise. The square waves' duty cycles are not kept. POKEY's channels add
 ;up as they are, without the NES's softening of a loud mix, so the music
-;plays a quarter softer than the game's and at half while an effect
+;plays at about half the game's loudness and at a third while an effect
 ;sounds, the effect at its own loudness (MusicLoud).
 ;
 ;PlayMusic / PlaySFX (A: the game's music or effect number) only ask: the
@@ -66,9 +66,11 @@
 .alias MSC_DEATH        $14     ;
 .alias MSC_VICTORY      $19     ;
 .alias MSC_LEVEL_UP     $1A     ;
+.alias SFX_WINGS        $81     ;The flight home (wings, RETURN: the game's DoReturn).
 .alias SFX_STAIRS       $82     ;
 .alias SFX_RUN          $83     ;
 .alias SFX_MENU         $85     ;
+.alias SFX_CONFIRM      $86     ;(The YES/NO window's.)
 .alias SFX_ENEMY_HIT    $87     ;
 .alias SFX_EXCELLENT    $88     ;
 .alias SFX_ATTACK       $89     ;
@@ -82,6 +84,12 @@
 
 
 ;--------------------------------------[Requests]----------------------------------------------------
+
+;The menu button's sound: a choice made in a selection window, or the
+;command window up (the game's SFX_MENU_BTN).
+Beep:
+        LDA #SFX_MENU           ;
+        JMP PlaySFX             ;
 
 PlayMusic:
         STA Song                ;
@@ -426,12 +434,13 @@ APUEnvRun:
         LDA ChDecay,X           ;A step: the volume down, or at 0 again
         BEQ +                   ;from 15 if looping (bit 5).
         DEC ChDecay,X           ;
-        JMP ++                  ;
+        JMP APUEnvRunNext       ;
 *       LDA ChCtl,X             ;
         AND #$20                ;
         BEQ +                   ;
         LDA #15                 ;
         STA ChDecay,X           ;
+APUEnvRunNext:
 *       LDA SndTemp             ;
         JMP APUEnvRun           ;
 APUEnvLast:
@@ -573,8 +582,8 @@ PokeyTri:
         STA AUDC4               ;
         RTS                     ;
 
-;A = a music channel's volume A (0-15) as POKEY plays it, pure tone: a
-;quarter softer than the game's, half while an effect plays (SndTemp: 0
+;A = a music channel's volume A (0-15) as POKEY plays it, pure tone:
+;about half the game's, a third while an effect plays (SndTemp: 0
 ;or 16), so that the effects are heard over it. (Never 0 for a volume
 ;that is not, but AUDC's tone bits make it non-zero anyway.)
 MusicLoud:
@@ -585,5 +594,5 @@ MusicLoud:
         ORA #$A0                ;
         RTS                     ;
 VibMul:         .byte 0, 1, 2, 1, 0, 1, 2, 1
-MusicVol:       .byte 0, 1, 2, 2, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10, 11, 11
-                .byte 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8
+MusicVol:       .byte 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8
+                .byte 0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5

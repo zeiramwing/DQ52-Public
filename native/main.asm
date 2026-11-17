@@ -73,9 +73,39 @@
 .alias LastKey          $07C2   ;last frame's,
 .alias KeyNew           $07C3   ;and the one just pressed (0: none).
 .alias Paused           $07C4   ;Non-zero: the keypad's Pause holds the game.
-.alias DlgVCount        $07C5   ;VCOUNT on the line above the dialog window.
 .alias KEY_PAUSE        $08     ;Keypad codes (KBCODE bits 1-4).
 .alias KEY_START        $0C     ;
+.alias KEY_RESET        $04     ;(The controller's Reset.)
+.alias CursorClock      $07E2   ;The cursor's blink: shown while bit 4 is clear.
+.alias ArrowA           $07E3   ;8: set A's arrow, as the map has it (CursorBlink),
+.alias ArrowL           $07EB   ;8: and the battle's lower bands' (its white copy).
+.alias QuietLoad        $07E1   ;Non-zero: LoadMap plays nothing, fades nothing in, and
+                                ;leaves the screen off (the map behind the title or menu).
+.alias VbiOn            $07E0   ;Non-zero once the VBI runs (no fades before: boot's map).
+.alias TextSpeed        $07DE   ;Frames waited between letters: 0 fast, 1 normal, 2 slow
+.alias TextWait         $07DF   ;(the start menu's; the game's MessageSpeed), and left.
+.alias IdleLo           $07DB   ;Frames with nothing pressed (the VBI's): from
+.alias IdleHi           $07DC   ;IdleHi $80 on (about 9 minutes), attract mode.
+.alias AttractMask      $07DD   ;$FF, or $F6 in attract mode: the colors dimmed.
+.alias FxKind           $07D2   ;The effect running (FX_), the VBI's (Effects),
+.alias FxTime           $07D3   ;and its frames left.
+.alias TintHue          $07D4   ;GreyTime's hue: 0 grey, FX_RED the hero's death.
+.alias ShakeH           $07D5   ;The shake this frame: added to HSCROL,
+.alias ShakeV           $07D6   ;and VSCROL.
+.alias BlinkOff         $07D7   ;Non-zero: the struck monster hidden (its blink).
+.alias FxTint           $07D8   ;This frame: bit 0 the monster's band tinted, bit 1 all.
+.alias Frozen           $07D9   ;Non-zero: the rows shown from FreezeBuf (EndBattle's).
+.alias EndPending       $07DA   ;Non-zero: the VBI ends the battle's display at once,
+.alias StartPending     $07FA   ;or starts it (StartBattle's, the scene drawn).
+.alias FreezeBuf        $0F00   ;The battle's last screen, rows of 48 bytes: 0-4
+.alias FreezeBuf2       $3B00   ;in player 3's memory, 5-28 here.
+.alias FREEZE_SPLIT     3+3*5   ;(The display list's offset of row 5.)
+.alias FX_SHAKE         1       ;The hero hit (PlayerHit): the screen shaken.
+.alias FX_BLINK         2       ;The enemy hit (PlyrHitEn): the monster blinks.
+.alias FX_ENSPELL       3       ;The enemy chants: the monster grey.
+.alias FX_SPELL         4       ;A spell cast, or the wings: the screen grey and back.
+.alias FX_GROUND        5       ;Hurtful ground: the screen red every other frame.
+.alias FX_RED           $30     ;Red-orange.
 .alias GreyTime         $07BD   ;Frames the screen is grey (the drop made),
 .alias FadeSub          $07BE   ;and luminance taken from the colors (a fade).
 .alias BridgeY          $03D4   ;The rainbow bridge's row while it is shown ($FF: not).
@@ -121,6 +151,9 @@
 .alias DL_ROWS          29      ;Display list rows: 28 shown, one more for VSCROL.
 .alias DLG_FIRST        18      ;The dialog window's first row,
 .alias DLG_INK          $0E     ;its text's brightness (mode 2: COLPF1).
+.alias ShownColors      $07F5   ;5: COLPF0-3, COLBK as SetHardware set them (tinted,
+                                ;faded, dimmed): for the interrupts that set them back.
+.alias DlgInk           $07F4   ;DLG_INK as this frame shows it (faded, dimmed: SetHardware).
 .alias HERO_LINE        128     ;The hero's top line in player memory,
 .alias HERO_HPOS        128     ;and its horizontal position: block 8 of the view.
 .alias FIRST_LINE       16      ;The first scan line shown.
@@ -195,12 +228,13 @@
 .alias Dark             $75     ;Non-zero: a dark map (a dungeon),
 .alias LightR           $76     ;its light's reach round the hero (0: its block),
 .alias LightW           $77     ;and width (2 * LightR + 1).
-.alias RowLit           $78     ;DrawRowPart: bit 7, the row is in the light.
 .alias DARK_BLOCK       39      ;A block all black (the game has 39).
+.alias DIM_ADD          32      ;A dark map's dimmed characters' codes: + this (convert.py).
+.alias CharAdd          $D8     ;Added to a block's codes as drawn: 0, or DIM_ADD.
+.alias RingW            $D9     ;LightW + 2: the light and its ring.
 .alias Loading          $C4     ;Non-zero: a map is loading (the screen off).
 .alias StepDone         $C5     ;Non-zero: a step has just ended.
 .alias Random           $C6     ;2: random number.
-.alias DliRow           $C8     ;The display row the next DLI changes.
 .alias PeopleOn         $C9     ;Townspeople on this map.
 .alias VbiTmp           $CA     ;The VBI's own temporary.
 .alias Amount           $CB     ;2: the amount a message shows.
@@ -236,82 +270,17 @@ Start:
         LDA #$00                ;Display off while setting up.
         STA NMIEN               ;
         STA DMACTL              ;
-        TAX                     ;Clear zero page, the game state and the
-*       STA $00,X               ;display list ($0240-$033F), the people
-        STA $0240,X             ;($0400-$07FF), player memory, the screen
-        INX                     ;and the map image.
-        BNE -                   ;
-        LDA #$04                ;
-        STA Ptr+1               ;
-        LDA #$00                ;
-        STA Ptr                 ;
-        LDY #$00                ;
-*       STA (Ptr),Y             ;
-        INY                     ;
-        BNE -                   ;
-        INC Ptr+1               ;
-        LDX Ptr+1               ;
-        CPX #$29                ;$0400-$28FF.
-        BNE -                   ;
-        LDX #NEW_GAME_SIZE-1    ;A new hero.
-*       LDA NewGame,X           ;
-        STA HeroName,X          ;
-        DEX                     ;
-        BPL -                   ;
-        LDX #$00                ;The name's letters, before its blanks.
-*       LDA HeroName,X          ;
-        CMP #$5F                ;
-        BCS +                   ;
-        INX                     ;
-        CPX #$08                ;
-        BNE -                   ;
-*       STX NameLen             ;
-        JSR NameStats           ;The name's part in the stats.
-        LDA #$06                ;
-        STA CmdDownMax          ;
-        LDA #$A5                ;
-        STA Random              ;
-        STA Random+1            ;
-
-        LDA #HERO_HPOS          ;
-        JSR HeroAt              ;
-        LDA #$00                ;
-        STA IRQEN               ;
-        STA POTGO               ;
-        LDA #$02                ;
-        STA SKCTL               ;Scan the keypad (and the top fire button).
-        LDA #$04                ;The pots on (the stick's), controller 1:
-        STA CONSOL              ;without this they read 0, up and left.
-        LDA #$FF                ;
-        STA CurBank             ;
-        STA Shown               ;
-        LDA #GFX_BANK           ;The tables to RAM: 4 pages at TextA (GFX_BANK
-        JSR SelectBank          ;from $8500).
-        LDA #$85                ;
-        STA MapPtr+1            ;
-        LDA #>TextA             ;
-        LDX #$04                ;
-        JSR CopyPages           ;
-        JSR LoadSetB            ;
-        LDA #$FF                ;
-        STA Shown               ;
-        LDA #START_FACING       ;Facing down (or up, before the King).
-        STA Facing              ;
-        JSR BuildDList          ;
-        JSR InitSound           ;
-        LDA #<VBI               ;
-        STA VVBLKI              ;
-        LDA #>VBI               ;
-        STA VVBLKI+1            ;
-        LDA #<DLI               ;
-        STA VDSLST              ;
-        LDA #>DLI               ;
-        STA VDSLST+1            ;
+        LDA #$FF                ;The setting up runs from MSG_BANK (BootInit,
+        STA CurBank             ;poweron.asm: room in the program's half).
+        JSR SelectMsg           ;
+        JSR BootInit            ;
 
         LDA #START_X            ;
         STA HeroX               ;
         LDA #START_Y            ;
         STA HeroY               ;
+        LDA #NAME_ENTRY         ;(The title first: the map loaded unseen,
+        STA QuietLoad           ;unheard.)
         LDA #START_MAP          ;The overworld (but in some test builds).
         JSR LoadMap             ;
         LDA #$06                ;The first frame: a password asked for?
@@ -319,6 +288,7 @@ Start:
 
         LDA #$C0                ;Vertical blank and display list interrupts.
         STA NMIEN               ;
+        STA VbiOn               ;(Fades from now: their frames come.)
         CLI                     ;
         LDA FrameCount          ;
         STA LastFrame           ;
@@ -364,6 +334,24 @@ MainLoop:
 *       STX KeyNew              ;
         LDA Key                 ;
         STA LastKey             ;
+        LDA KeyNew              ;The keypad's Reset: the cartridge from the
+        CMP #KEY_RESET          ;start, the title (once it is let go).
+        BNE NotReset            ;
+        JSR ResetHook           ;(Test builds: the script kept.)
+ResetHeld:
+        LDA SKSTAT              ;
+        AND #$04                ;
+        BEQ ResetHeld           ;
+        JMP Start               ;
+NotReset:
+        LDA Buttons             ;Anything pressed: not idle (attract mode
+        ORA Stick               ;over).
+        ORA Key                 ;
+        BEQ StillIdle           ;
+        LDA #$00                ;
+        STA IdleLo              ;
+        STA IdleHi              ;
+StillIdle:
 
         LDA Mode                ;
         BEQ Walk                ;
@@ -399,6 +387,9 @@ Walk:
         LDA Paused              ;
         EOR #$01                ;
         STA Paused              ;
+        ASL                     ;(Paused: the screen dimmed, 4 less
+        ASL                     ;luminance.)
+        STA FadeSub             ;
 *       LDA Paused              ;
         BEQ +                   ;
         JMP Frame               ;
@@ -443,7 +434,7 @@ Step:
         LDA #$00                ;
         STA StepDone            ;
         JSR StepTimers          ;(A message up: no more this step.)
-        BCS +                   ;
+        BCS StepNext            ;
         JSR CheckDoor           ;
         JSR EndTrigger          ;(The ending: nothing more.)
         BCS +                   ;
@@ -455,6 +446,7 @@ Step:
         JSR GuardianFight       ;(A guardian's: no other.)
         BCS +                   ;
         JSR CheckEncounter      ;
+StepNext:
 *       JMP Frame               ;
 Stand:
         LDA StandTime           ;The status window, once the hero has
@@ -489,11 +481,20 @@ NextRandom:
 ;Load map A with the hero at (HeroX, HeroY): its image to RAM (the screen
 ;off meanwhile), its people, and the view around the hero.
 LoadMap:
+        PHA                     ;The old map faded out first (not the
+        LDA VbiOn               ;boot's, before the VBI runs).
+        BEQ LoadNoFade          ;
+        JSR FadeOut             ;
+LoadNoFade:
+        PLA                     ;
         STA MapId               ;
         JSR LoadMapRec          ;
         JSR SetBridge           ;
         JSR LoadAnim            ;
+        LDA QuietLoad           ;
+        BNE +                   ;
         JSR PlayMapMusic        ;
+*
         LDA #$01                ;
         STA Loading             ;
         LDA #$00                ;
@@ -545,10 +546,134 @@ LoadMap:
         JSR DLIBits             ;
         JSR DrawView            ;
         JSR SetScroll           ;
+        LDX #$07                ;The arrow as this map has it (the cursor
+KeepArrow:                      ;blinks from it: CursorBlink).
+        LDA CharsetA+ARROW_CODE*8,X ;
+        STA ArrowA,X            ;
+        DEX                     ;
+        BPL KeepArrow           ;
+        LDA QuietLoad           ;Quiet: the screen left off, no fade in.
+        BEQ LoadShow            ;
+        LDA #$00                ;
+        STA QuietLoad           ;
+        STA FadeSub             ;
+        BEQ FadedIn             ;
+LoadShow:
         LDA #$00                ;
         STA Loading             ;
+        JSR FadeIn              ;The new map faded in.
+FadedIn:
         LDA FrameCount          ;The frames loading took are not missed.
         STA LastFrame           ;
+        RTS                     ;
+
+;The screen faded out, as the game's PalFadeOut: 4 luminance less every
+;4 frames to black, then FadeSub 12, for FadeIn to start from (play
+;builds: MAP_FADE; test builds leave fades out).
+FadeOut:
+        LDA #MAP_FADE           ;
+        BEQ FadeDone            ;
+        LDA #$04                ;
+FadeOutStep:
+        STA FadeSub             ;
+        JSR Wait4               ;
+        LDA FadeSub             ;
+        CLC                     ;
+        ADC #$04                ;
+        CMP #20                 ;
+        BNE FadeOutStep         ;
+        LDA #12                 ;
+        STA FadeSub             ;
+FadeDone:
+        RTS                     ;
+
+;Faded in, as the game's PalFadeIn: FadeSub to 0, 4 a step every 4 frames.
+FadeIn:
+        LDA FadeSub             ;
+        BEQ FadeDone            ;
+        JSR Wait4               ;
+        LDA FadeSub             ;
+        SEC                     ;
+        SBC #$04                ;
+        STA FadeSub             ;
+        JMP FadeIn              ;
+
+;The selection cursor blinks, as the game's (UpdateCursorGFX): shown 16
+;frames, gone 16, and shown at once when drawn (PutTileA). Its glyph
+;changes: set A's arrow, and in a battle the bands' copies (the scene's,
+;on the overworld; the monster's two, from ArrowL). Not on the title, nor
+;while a map loads.
+CursorBlink:
+        LDA Loading             ;
+        BNE BlinkDone           ;
+        LDA TitleOn             ;
+        CMP #$01                ;
+        BEQ BlinkDone           ;
+        LDX CursorClock         ;
+        INC CursorClock         ;
+        TXA                     ;
+        AND #$0F                ;
+        BNE BlinkDone           ;
+        TXA                     ;
+        AND #$10                ;
+        STA VbiTmp              ;(0: shown.)
+        LDY #$07                ;
+BlinkByte:
+        LDA #$00                ;
+        LDX VbiTmp              ;
+        BNE BlinkSetA           ;
+        LDA ArrowA,Y            ;
+BlinkSetA:
+        STA CharsetA+ARROW_CODE*8,Y ;
+        LDX BattleOn            ;
+        BEQ BlinkNext           ;
+        LDX MapId               ;(A cave's battle: no scene's set.)
+        BNE BlinkLower          ;
+        STA UpperSet+ARROW_CODE*8,Y ;
+BlinkLower:
+        LDA #$00                ;
+        LDX VbiTmp              ;
+        BNE BlinkSetL           ;
+        LDA ArrowL,Y            ;
+BlinkSetL:
+        STA LowerSet+ARROW_CODE*8,Y ;
+        STA Lower2Set+ARROW_CODE*8,Y ;
+BlinkNext:
+        DEY                     ;
+        BPL BlinkByte           ;
+BlinkDone:
+        RTS                     ;
+
+;The boot's tables to RAM (BootInit's, through FarOut: it changes banks):
+;4 pages at TextA from GFX_BANK's $8500, and set B.
+BootTables:
+        LDA #GFX_BANK           ;
+        JSR SelectBank          ;
+        LDA #$85                ;
+        STA MapPtr+1            ;
+        LDA #>TextA             ;
+        LDX #$04                ;
+        JSR CopyPages           ;
+        JMP LoadSetB            ;
+
+;A frame gone by (the VBI's).
+WaitFrame:
+        LDA FrameCount          ;
+WaitFrameSame:
+        CMP FrameCount          ;
+        BEQ WaitFrameSame       ;
+        RTS                     ;
+
+;Four frames gone by.
+Wait4:
+        LDX #$04                ;
+Wait4Frame:
+        LDA FrameCount          ;
+Wait4Same:
+        CMP FrameCount          ;
+        BEQ Wait4Same           ;
+        DEX                     ;
+        BNE Wait4Frame          ;
         RTS                     ;
 
 ;Copy X pages from MapPtr's page on to page A on (both moved on past them).
@@ -647,6 +772,7 @@ LinksOut:
 FindLinkFrom:
         JSR LinksIn             ;
         LDX #NUM_LINKS-1        ;
+FindLinkFromLoop:
 *       LDA LinkFromMap,X       ;
         CMP MapId               ;
         BNE +                   ;
@@ -659,13 +785,14 @@ FindLinkFrom:
         SEC                     ;
         RTS                     ;
 *       DEX                     ;
-        BPL --                  ;
+        BPL FindLinkFromLoop    ;
         JMP LinksOut            ;
 
 ;X = the map link to the hero's block (C set), or C clear.
 FindLinkTo:
         JSR LinksIn             ;
         LDX #NUM_LINKS-1        ;
+FindLinkToLoop:
 *       LDA LinkToMap,X         ;
         CMP MapId               ;
         BNE +                   ;
@@ -678,7 +805,7 @@ FindLinkTo:
         SEC                     ;
         RTS                     ;
 *       DEX                     ;
-        BPL --                  ;
+        BPL FindLinkToLoop      ;
         JMP LinksOut            ;
 
 ;Follow link X to its end (GoLinkTo) or back to its start (GoLinkFrom),
@@ -725,10 +852,11 @@ StartStep:
         LDA BlockWall,Y         ;
         BNE +                   ;
         JSR PersonAt            ;
-        BCC ++                  ;
+        BCC StartStepNext       ;
 *       INC Blocked             ;
         LDA #SFX_WALL           ;
         JMP PlaySFX             ;
+StartStepNext:
 *       LDA BX                  ;
         STA HeroX               ;
         LDA BY                  ;
@@ -742,16 +870,18 @@ StartStep:
         DEX                     ;
         BEQ StepDown            ;
 StepLeft:
-        DEC LeftBlock           ;The new left column comes into view; the
-        LDA #$08                ;view starts a block right of it.
-        STA FineX               ;
+        DEC LeftBlock           ;The new left column comes into view (two
+        LDA #$08                ;left of LeftBlock); the view starts a
+        STA FineX               ;block right of it.
         LDA LeftBlock           ;
+        SEC                     ;
+        SBC #$02                ;
         JSR DrawColumn          ;
         JMP RedrawLight         ;
 StepRight:
         LDA LeftBlock           ;The column after the view's right edge.
         CLC                     ;
-        ADC #17                 ;
+        ADC #19                 ;
         JSR DrawColumn          ;
         JMP RedrawLight         ;
 StepUp:
@@ -780,7 +910,7 @@ StepFrame:
 FrameLeft:
         LDA Moving              ;
         LSR                     ;
-        BCC +                   ;
+        BCC FrameRightNext      ;
         DEC FineX               ;
         JMP StepCount           ;
 FrameRight:
@@ -794,6 +924,7 @@ FrameRight:
         LDA #$00                ;
         STA FineX               ;
         INC LeftBlock           ;
+FrameRightNext:
 *       JMP StepCount           ;
 FrameUp:
         DEC FineY               ;
@@ -825,6 +956,9 @@ DirY:   .byte $FF, $00, $01, $00
 ;A frame is players 0-2's 16 lines each (64 bytes a frame, GFX_HERO in
 ;GFX_BANK: convert.py's hero_frames; the bank in is put back).
 ShowHero:
+        LDA TitleOn             ;Not while the title is up (its sprites in
+        CMP #$01                ;players 0 and 1: TitleShow).
+        BEQ ShowDone            ;
         LDA Facing              ;
         ASL                     ;
         STA Tmp                 ;
@@ -903,7 +1037,7 @@ SelectMsg:
         LDA #MSG_BANK           ;(The messages' bank: asked for most.)
 SelectBank:
         CMP CurBank             ;
-        BEQ +                   ;
+        BEQ SelectBankNext      ;
         STA CurBank             ;
         AND #$0C                ;
         TAX                     ;
@@ -914,6 +1048,7 @@ SelectBank:
         ASL                     ;
         TAX                     ;
         LDA SuperCartLo,X       ;
+SelectBankNext:
 *       RTS                     ;
 
 ;A = the block at (BX, BY): the map's border off its edges. X is kept.
@@ -979,7 +1114,7 @@ RowOff:
 ;rainbow bridge is built (BridgeY: its row). Y kept.
 WorldRow:
         CPY BridgeY             ;
-        BEQ +                   ;
+        BEQ WorldRowNext        ;
         TYA                     ;Y * 128.
         LSR                     ;
         STA MapPtr+1            ;
@@ -1008,6 +1143,7 @@ WorldRow:
         ADC #>World             ;
         STA MapPtr+1            ;
         RTS                     ;
+WorldRowNext:
 *       LDA #<BridgeRow         ;
         STA MapPtr              ;
         LDA #>BridgeRow         ;
@@ -1076,34 +1212,24 @@ CopyTown:
 DrawRowPart:
         JSR RowPointer          ;
         ROR RowIsOff            ;(Bit 7: the row is off the map.)
-        LDA BY                  ;In the light: its row (and its column, for
-        SEC                     ;each block) within LightR of the hero's.
-        SBC HeroY               ;
-        CLC                     ;
-        ADC LightR              ;
-        CMP LightW              ;
-        ROR RowLit              ;(Bit 7 clear: lit.)
         LDA BY                  ;Ring row * 128: (BY AND 15) * 256.
         AND #$0F                ;
         CLC                     ;
         ADC #>Screen            ;
         STA Ptr+1               ;
 RowBlock:
-        LDY BX                  ;
-        LDA Dark                ;A dark map: black but in the light.
-        BEQ RowLitBlock         ;
-        BIT RowLit              ;
-        BMI RowDark             ;
-        TYA                     ;
-        SEC                     ;
-        SBC HeroX               ;
-        CLC                     ;
-        ADC LightR              ;
-        CMP LightW              ;
-        BCC RowLitBlock         ;
+        LDA #$00                ;
+        STA CharAdd             ;
+        LDA Dark                ;A dark map: black but in the light (and
+        BEQ RowLit2             ;dimmed in the ring round it).
+        JSR LightClass          ;
+        BCC RowLit2             ;
 RowDark:
+        LDY BX                  ;
         LDX #DARK_BLOCK         ;
         JMP RowDraw             ;
+RowLit2:
+        LDY BX                  ;
 RowLitBlock:
         BIT RowIsOff            ;The block: the map's, or off it the border.
         BMI +                   ;
@@ -1111,10 +1237,11 @@ RowLitBlock:
         BCS +                   ;
         LDA (MapPtr),Y          ;
         TAX                     ;
-        JMP ++                  ;
+        JMP RowLitBlockNext     ;
 *       LDX MapId               ;
         LDA MapBorder           ;
         TAX                     ;
+RowLitBlockNext:
 *
 RowDraw:
         TYA                     ;Its ring column.
@@ -1122,22 +1249,30 @@ RowDraw:
         ASL                     ;
         STA Ptr                 ;
         LDY #$00                ;Its 4 characters, each at its column
-        LDA BlockUL,X           ;and 64 on.
+        LDA BlockUL,X           ;and 64 on (+ CharAdd: dimmed).
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #64                 ;
         STA (Ptr),Y             ;
         LDY #$01                ;
         LDA BlockUR,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #65                 ;
         STA (Ptr),Y             ;
         LDY #128                ;
         LDA BlockLL,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #192                ;
         STA (Ptr),Y             ;
         LDY #129                ;
         LDA BlockLR,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #193                ;
         STA (Ptr),Y             ;
@@ -1171,21 +1306,11 @@ DrawColumn:
 *       STA ColStride           ;
         JSR MapBankIn           ;Its bank, once.
 ColBlock:
-        LDA Dark                ;A dark map: black but in the light.
-        BEQ ColLitBlock         ;
-        LDA BX                  ;
-        SEC                     ;
-        SBC HeroX               ;
-        CLC                     ;
-        ADC LightR              ;
-        CMP LightW              ;
-        BCS ColDark             ;
-        LDA BY                  ;
-        SEC                     ;
-        SBC HeroY               ;
-        CLC                     ;
-        ADC LightR              ;
-        CMP LightW              ;
+        LDA #$00                ;
+        STA CharAdd             ;
+        LDA Dark                ;A dark map: black but in the light (and
+        BEQ ColLitBlock         ;dimmed in the ring round it).
+        JSR LightClass          ;
         BCC ColLitBlock         ;
 ColDark:
         LDA #$00                ;
@@ -1208,9 +1333,9 @@ ColLitBlock:
         CLC                     ;
         ADC ColStride           ;
         STA MapPtr              ;
-        BCC +                   ;
+        BCC ColReadNext         ;
         INC MapPtr+1            ;
-        BCS +                   ;
+        BCS ColReadNext         ;
 ColBridge:
         JSR RowAddr             ;
         LDA #$00                ;
@@ -1221,6 +1346,7 @@ ColFirst:
         INC ColValid            ;
 ColRead:
         LDY BX                  ;
+ColReadNext:
 *       LDA (MapPtr),Y          ;
         TAX                     ;
         JMP ColDraw             ;
@@ -1232,22 +1358,30 @@ ColBorder:
         TAX                     ;
 ColDraw:
         LDY #$00                ;Its 4 characters, each at its column
-        LDA BlockUL,X           ;and 64 on.
+        LDA BlockUL,X           ;and 64 on (+ CharAdd: dimmed).
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #64                 ;
         STA (Ptr),Y             ;
         LDY #$01                ;
         LDA BlockUR,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #65                 ;
         STA (Ptr),Y             ;
         LDY #128                ;
         LDA BlockLL,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #192                ;
         STA (Ptr),Y             ;
         LDY #129                ;
         LDA BlockLR,X           ;
+        CLC                     ;
+        ADC CharAdd             ;
         STA (Ptr),Y             ;
         LDY #193                ;
         STA (Ptr),Y             ;
@@ -1262,8 +1396,8 @@ ColDraw:
         BNE ColBlock            ;
         RTS                     ;
 
-;A dark map: the light round the hero drawn again, a block more each way
-;(what has just left it black).
+;A dark map: the light round the hero drawn again, two blocks more each
+;way (its dimmed ring, and what has just left the light or the ring).
 RedrawLight:
         LDA Dark                ;
         BEQ LightDone           ;
@@ -1271,22 +1405,22 @@ RedrawLight:
         SEC                     ;
         SBC LightR              ;
         SEC                     ;
-        SBC #$01                ;
+        SBC #$02                ;
         STA BY                  ;
-        LDA LightW              ;Rows: the width + 2.
+        LDA LightW              ;Rows: the width + 4.
         CLC                     ;
-        ADC #$02                ;
+        ADC #$04                ;
         STA Rows                ;
 LightRow:
         LDA HeroX               ;
         SEC                     ;
         SBC LightR              ;
         SEC                     ;
-        SBC #$01                ;
+        SBC #$02                ;
         STA BX                  ;
         LDA LightW              ;
         CLC                     ;
-        ADC #$02                ;
+        ADC #$04                ;
         STA Count               ;
         JSR DrawRowPart         ;
         INC BY                  ;
@@ -1295,12 +1429,63 @@ LightRow:
 LightDone:
         RTS                     ;
 
-;Draw block row A, columns LeftBlock to LeftBlock + 17.
+;Block BX, BY in a dark map: C clear in the light (CharAdd 0); C clear and
+;CharAdd DIM_ADD in the ring a block past it, while there is a light (a
+;torch or RADIANT: LightR 1 on); else C set, dark.
+LightClass:
+        LDA BX                  ;
+        SEC                     ;
+        SBC HeroX               ;
+        CLC                     ;
+        ADC LightR              ;
+        CMP LightW              ;
+        BCS LightOuter          ;
+        LDA BY                  ;
+        SEC                     ;
+        SBC HeroY               ;
+        CLC                     ;
+        ADC LightR              ;
+        CMP LightW              ;
+        BCC LightIn             ;
+LightOuter:
+        LDA LightR              ;
+        BEQ LightOut            ;
+        LDA LightW              ;
+        CLC                     ;
+        ADC #$02                ;
+        STA RingW               ;
+        LDA BX                  ;Within LightR + 1 both ways.
+        SEC                     ;
+        SBC HeroX               ;
+        SEC                     ;
+        ADC LightR              ;
+        CMP RingW               ;
+        BCS LightOut            ;
+        LDA BY                  ;
+        SEC                     ;
+        SBC HeroY               ;
+        SEC                     ;
+        ADC LightR              ;
+        CMP RingW               ;
+        BCS LightOut            ;
+        LDA #DIM_ADD            ;
+        STA CharAdd             ;
+        CLC                     ;
+LightIn:
+        RTS                     ;
+LightOut:
+        SEC                     ;
+        RTS                     ;
+
+;Draw block row A, columns LeftBlock - 2 to LeftBlock + 19 (the normal
+;playfield shows LeftBlock - 2 to + 17, and + 18 while stepping right).
 DrawRow:
         STA BY                  ;
         LDA LeftBlock           ;
+        SEC                     ;
+        SBC #$02                ;
         STA BX                  ;
-        LDA #18                 ;
+        LDA #22                 ;
         STA Count               ;
         JMP DrawRowPart         ;
 
@@ -1365,8 +1550,8 @@ SetScroll:
         ASL                     ;by HSCROL. So the address is x / 4 - 3
         CLC                     ;characters (mod the ring's 64), and HSCROL
         ADC Tmp                 ;= 4 - x AND 3.
-        SEC                     ;
-        SBC #$03                ;
+        SEC                     ;(The normal playfield: 4 more to the left,
+        SBC #$07                ;column -4 at its left edge.)
         AND #$3F                ;
         STA ShCol               ;
         LDA FineX               ;
@@ -1409,6 +1594,118 @@ DListRow:
         STA DList+2,X           ;
         JMP SetAddresses        ;
 
+;An effect a frame (StartFx), as the game times them: the hero hit, the
+;screen 2 pixels over, then down, each one frame in three, 8 times (not
+;with the Dragonlord's second form), red every other frame once he is dead
+;(nor with him); a spell cast, the screen grey 3 frames in 5, 8 times; the
+;enemy chanting, its band grey 2 frames in 5, 5 times. (The enemy hit's
+;blink is the battle's, BattleFrame's: it redraws cells.)
+Effects:
+        INC IdleLo              ;(Idle: past $FFFF, back to $8000: attract
+        BNE +                   ;mode stays.)
+        INC IdleHi              ;
+        BNE +                   ;
+        LDA #$80                ;
+        STA IdleHi              ;
+*       LDA #$FF                ;
+        STA AttractMask         ;
+        LDA #$00                ;
+        STA ShakeH              ;
+        STA ShakeV              ;
+        STA TintHue             ;
+        STA FxTint              ;
+        LDA IdleHi              ;Attract mode, as the 5200's games have it
+        BPL +                   ;(a still picture spares the screen): all
+        ASL                     ;one hue, a new one every 256 frames, and
+        ASL                     ;dimmed.
+        ASL                     ;
+        ASL                     ;
+        STA TintHue             ;
+        LDA #$F6                ;
+        STA AttractMask         ;
+        BNE FxAll               ;
+*
+        LDX FxTime              ;
+        BEQ FxDone              ;
+        DEX                     ;
+        STX FxTime              ;
+        TXA                     ;Y: groups of 3 frames, A: the frame in it.
+        LDY #$00                ;
+*       CMP #$03                ;
+        BCC +                   ;
+        SBC #$03                ;
+        INY                     ;
+        BNE -                   ;
+*       LDX FxKind              ;
+        CPX #FX_SHAKE           ;
+        BNE FxFlash             ;
+        LDX Enemy               ;
+        CPX #EN_DRAGONLORD2     ;
+        BEQ FxDone              ;
+        CMP #$00                ;
+        BNE FxDead              ;
+        TYA                     ;Over, or down: up instead if VSCROL is
+        LSR                     ;near its last line.
+        BCS +                   ;
+        LDA #$02                ;
+        STA ShakeH              ;
+        BNE FxDead              ;
+*       LDX #$02                ;
+        LDA ShV                 ;
+        CMP #$06                ;
+        BCC +                   ;
+        LDX #$FE                ;
+*       STX ShakeV              ;
+FxDead:
+        LDA HitPoints           ;
+        BNE FxDone              ;
+        LDA FxTime              ;
+        LSR                     ;
+        BCC FxDone              ;
+        LDA #FX_RED             ;
+        STA TintHue             ;
+        BNE FxAll               ;
+FxFlash:
+        CPX #FX_GROUND          ;Hurtful ground: red on the odd frames left
+        BNE FxFlash5            ;(the game's RedFlashScreen: once for a
+        LDA FxTime              ;swamp, 3 times for the barrier).
+        LSR                     ;
+        BCC FxDone              ;
+        LDA #FX_RED             ;
+        STA TintHue             ;
+        BNE FxAll               ;
+FxFlash5:
+        LDA FxTime              ;The frame in 5.
+*       CMP #$05                ;
+        BCC +                   ;
+        SBC #$05                ;
+        BCS -                   ;
+*       CPX #FX_SPELL           ;
+        BNE FxEnemy             ;
+        CMP #$02                ;
+        BCC FxDone              ;
+FxAll:
+        LDA #$01                ;
+        STA GreyTime            ;
+        LDA #$03                ;
+        STA FxTint              ;
+FxDone:
+        RTS                     ;
+FxEnemy:
+        CPX #FX_ENSPELL         ;
+        BNE FxDone              ;
+        CMP #$02                ;
+        BCS FxDone              ;
+        LDA #$01                ;
+        STA FxTint              ;
+        RTS                     ;
+
+;Start effect A for X frames.
+StartFx:
+        STA FxKind              ;
+        STX FxTime              ;
+        RTS                     ;
+
 ;In a battle: MonFade a step toward MonFadeTo, and the monster's colors
 ;as shown (MonShow) from MonColors, less MonFade's luminance (none left:
 ;black).
@@ -1437,7 +1734,12 @@ ShadeOne:
         AND #$F0                ;
         ORA VbiTmp              ;
 ShadeSet:
-        STA MonShow,X           ;
+        LDY FxTint              ;(Tinted: an effect's.)
+        BEQ +                   ;
+        AND #$0F                ;
+        ORA TintHue             ;
+        AND AttractMask         ;
+*       STA MonShow,X           ;
         DEX                     ;
         BPL ShadeOne            ;
 ShadeDone:
@@ -1514,10 +1816,38 @@ DLISet:
 ;Each display list row's address: ring row (ShRow + i) mod 32, column
 ;ShCol. Called by the VBI too, so it has its own temporary.
 SetAddresses:
+        LDA Frozen              ;Frozen: each row 40 bytes on in FreezeBuf.
+        BEQ SetRing             ;
+        LDX #$03                ;
+        LDA #<FreezeBuf         ;
+        LDY #>FreezeBuf         ;
+FrozenRow:
+        STA DList,X             ;
+        PHA                     ;
+        TYA                     ;
+        STA DList+1,X           ;
+        PLA                     ;
+        CLC                     ;
+        ADC #48                 ;
+        BCC +                   ;
+        INY                     ;
+*       INX                     ;
+        INX                     ;
+        INX                     ;
+        CPX #FREEZE_SPLIT       ;
+        BNE +                   ;
+        LDA #<FreezeBuf2        ;
+        LDY #>FreezeBuf2        ;
+*
+        CPX #3+3*DL_ROWS        ;
+        BNE FrozenRow           ;
+        RTS                     ;
+SetRing:
         LDA ShRow               ;
         STA VbiTmp              ;
         LDX #$03                ;
         LDY #DL_ROWS            ;
+SetRingLoop:
 *       LDA VbiTmp              ;Row * 128: high = row / 2, low = (row AND 1) * 128.
         LSR                     ;
         PHA                     ;
@@ -1537,7 +1867,23 @@ SetAddresses:
         INX                     ;
         INX                     ;
         DEY                     ;
-        BNE -                   ;
+        BNE SetRingLoop         ;
+        RTS                     ;
+
+;Color A less FadeSub's luminance (none left: black).
+FadeLum:
+        PHA                     ;
+        AND #$0F                ;
+        SEC                     ;
+        SBC FadeSub             ;
+        BCS +                   ;
+        PLA                     ;
+        LDA #$00                ;
+        RTS                     ;
+*       STA VbiTmp              ;
+        PLA                     ;
+        AND #$F0                ;
+        ORA VbiTmp              ;
         RTS                     ;
 
 ;The display and color registers: set at start and again every frame, as
@@ -1549,6 +1895,7 @@ SetHardware:
         BNE SetColor            ;
 *       LDA MapColors,X         ;
         STA COLPF0,X            ;
+        STA ShownColors,X       ;
         DEX                     ;
         BPL -                   ;
         BMI SetColored          ;
@@ -1557,19 +1904,11 @@ SetColor:
         LDY GreyTime            ;
         BEQ +                   ;
         AND #$0F                ;
-*       PHA                     ;
-        AND #$0F                ;
-        SEC                     ;
-        SBC FadeSub             ;
-        BCS +                   ;
-        PLA                     ;(Gone: black.)
-        LDA #$00                ;
-        BEQ ++                  ;
-*       STA VbiTmp              ;
-        PLA                     ;
-        AND #$F0                ;
-        ORA VbiTmp              ;
-*       STA COLPF0,X            ;
+        ORA TintHue             ;
+        AND AttractMask         ;
+*       JSR FadeLum             ;
+        STA COLPF0,X            ;
+        STA ShownColors,X       ;
         DEX                     ;
         BPL SetColor            ;
         LDA GreyTime            ;
@@ -1581,12 +1920,29 @@ SetColored:
         AND #F_CARRY            ;
         BEQ +                   ;
         LDX #$03                ;
-*       LDA HeroColors,X        ;
+*       LDA HeroColors,X        ;(Dimmed too in attract mode, and faded.)
+        AND AttractMask         ;
+        JSR FadeLum             ;
         STA COLPM0              ;
         LDA HeroColors+1,X      ;
+        AND AttractMask         ;
+        JSR FadeLum             ;
         STA COLPM1              ;
         LDA HeroColors+2,X      ;
+        AND AttractMask         ;
+        JSR FadeLum             ;
         STA COLPM2              ;
+        LDA #DLG_INK            ;The dialog's ink as the rest, for the
+        AND AttractMask         ;interrupts (the inn's fade, attract mode).
+        JSR FadeLum             ;
+        STA DlgInk              ;
+        LDA TitleOn             ;(The title: its sprites, players 0 and 1,
+        CMP #$01                ;black.)
+        BNE TitleNotUp          ;
+        LDA #$00                ;
+        STA COLPM0              ;
+        STA COLPM1              ;
+TitleNotUp:
         LDA #>CharsetA          ;
         STA CHBASE              ;
         LDA #<DList             ;
@@ -1599,7 +1955,9 @@ SetColored:
         STA PRIOR               ;their colors OR), in front of the playfield.
         LDA #$02                ;
         STA GRACTL              ;Players on.
-        LDA #$39                ;Narrow playfield, players single-line,
+        LDA #$00                ;(Player 3 unused, out of sight: FreezeBuf
+        STA HPOSP3              ;uses its memory.)
+        LDA #$3A                ;Normal playfield, players single-line,
         LDX Loading             ;or nothing while a map loads.
         BEQ +                   ;
         LDA #$00                ;
@@ -1614,13 +1972,36 @@ VBI:
         PHA                     ;
         TYA                     ;
         PHA                     ;
+        LDA EndPending          ;The battle's display ended, all in this VBI
+        BEQ +                   ;(EndBattle's): the map's rows from the ring,
+        LDA #$00                ;its interrupts and modes, the hero shown.
+        STA EndPending          ;
+        STA Frozen              ;
+        STA BattleOn            ;
+        STA DialogOn            ;
+        JSR DLIBits             ;
+        LDA #HERO_HPOS          ;
+        JSR HeroAt              ;
+*       LDA StartPending        ;The battle's display begun, all in this VBI
+        BEQ +                   ;(StartBattle's, the scene drawn under the
+        LDA #$00                ;held screen): the rows from the ring, the
+        STA StartPending        ;battle's interrupts.
+        STA Frozen              ;
+        LDA #$01                ;
+        STA BattleOn            ;
+        JSR DLIBits             ;
+*       JSR Effects             ;
+        JSR CursorBlink         ;
         JSR SetHardware         ;
         JSR DialogModes         ;
         JSR MonsterShade        ;
-        LDA #$00                ;The first row's DLI is row 1's.
-        STA DliRow              ;
-        LDX #<DLI               ;The interrupts: a battle's own chain, or the
-        LDY #>DLI               ;rows'.
+        LDX #<DLINone           ;The interrupts: a battle's own chain, or
+        LDY #>DLINone           ;the dialog window's while it is up (chosen
+        LDA DialogOn            ;here, so the interrupt has nothing to test
+        BEQ DliChosen           ;before its line's end), or none.
+        LDX #<DLI               ;
+        LDY #>DLI               ;
+DliChosen:
         LDA BattleOn            ;
         BEQ +                   ;
         LDX #<BattleDLI1        ;
@@ -1632,6 +2013,8 @@ VBI:
 *       LDA TitleOn             ;(The title's: TitleDLI.)
         CMP #$01                ;
         BNE +                   ;
+        LDX #$00                ;(Its bands from the first.)
+        STX TitleBand           ;
         LDX #<TitleDLI          ;
         LDY #>TitleDLI          ;
 *       STX VDSLST              ;
@@ -1642,15 +2025,14 @@ VBI:
         BNE +                   ;
         INC FrameHi             ;
 *       JSR SetAddresses        ;
-        LDA ShH                 ;
+        LDA ShH                 ;(And the hero's shake.)
+        CLC                     ;
+        ADC ShakeH              ;
         STA HSCROL              ;
         LDA ShV                 ;
+        CLC                     ;
+        ADC ShakeV              ;
         STA VSCROL              ;
-        EOR #$FF                ;VCOUNT on the last line above the dialog
-        SEC                     ;window (its rows' set): (16 + 18 * 8 - 1 -
-        ADC #FIRST_LINE+DLG_FIRST*8-1 ;VSCROL) / 2.
-        LSR                     ;
-        STA DlgVCount           ;
         LDA POT0                ;The last scan's stick, finished (read in
         STA PotX                ;the main loop the pots are still counting).
         LDA POT1                ;
@@ -1684,16 +2066,6 @@ VBIDone:
 .include "data.asm"
 .include "strings.asm"
 
-;A new hero: the name (in text tiles, padded with blanks), level, HP, MP,
-;gold and experience.
-NewGame:
-.include "name.asm"
-        .byte START_LEVEL, START_HP-START_HURT, START_MP ;(Level 1, all HP, but in tests.)
-        .word START_GOLD, START_EXP ;Gold, experience (0 but in tests).
-        .byte START_HP, START_MP, START_STR, START_AGI ;Max HP, max MP, strength, agility.
-        .byte START_EQUIP, START_KEYS, 0 ;Equipment, keys (none but in tests), herbs.
-        .byte START_INV0, START_INV1, START_INV2, START_INV3 ;Items (none but in tests),
-        .byte START_FLAGS       ;the flags (ModFlags: none but in tests).
 .alias NEW_GAME_SIZE    27
 .alias STATUS_DELAY     30      ;Frames standing before the status window.
 

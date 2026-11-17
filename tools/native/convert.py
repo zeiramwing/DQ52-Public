@@ -357,6 +357,8 @@ def people_into_blocks(grid, people, looks, accepted):
 
 
 FLOOR_REACH = 6                 # How far a wanderer may be moved onto the floor.
+KEEP_PLACE = {(8, 46)}          # (Town, control) left where the game has them: Brecconary's
+                                # man by the road was hard to see on its floor's yellow.
 
 
 def open_spot(grid, taken, x, y):
@@ -385,7 +387,7 @@ def open_spot(grid, taken, x, y):
     return all(q in seen for q in near)
 
 
-def onto_floor(grid, people):
+def onto_floor(grid, people, town_number):
     """Each townsperson who wandered in the game (mobile 1) set down on the
     town's main floor (the commonest block under the wanderers) at the
     nearest open spot (open_spot) within FLOOR_REACH blocks, facing down:
@@ -397,7 +399,7 @@ def onto_floor(grid, people):
     floor = max(set(under), key=under.count)
     people = list(people)
     for i, (g, x, y, f, c, m) in enumerate(people):
-        if not m:
+        if not m or (town_number, c) in KEEP_PLACE:
             continue
         taken = {(p[1], p[2]) for j, p in enumerate(people) if j != i}
         if grid[y][x] == floor and open_spot(grid, taken, x, y):
@@ -589,6 +591,22 @@ def map_image(chr_rom, blocks, used, plan, tiles, extra=None, wide=False, sea=Fa
     return bytes(image), len([c for c in chars[:TEXT_BASE_CODE] if c != bytes(8)]) + 1, free, accepted, steps
 
 
+DIM_ADD = 32                    # A dark map's dimmed characters: each one's code + this.
+
+
+def dim_copies(image, free):
+    """A dark map's image with each of its characters again DIM_ADD codes on,
+    every other pixel black (a checkerboard): the ring just past the light,
+    where it fades into the dark (the engine's LightClass)."""
+    if free > DIM_ADD:
+        sys.exit(f"convert: a dark map with {free} characters, more than {DIM_ADD} (no room to dim them)")
+    image = bytearray(image)
+    for c in range(free):
+        for y in range(8):
+            image[(c + DIM_ADD) * 8 + y] = image[c * 8 + y] & (0x33 if y % 2 == 0 else 0xCC)
+    return bytes(image)
+
+
 def write_all(rom_path, out_dir):
     """Write the engine's data: images.bin (each map's characters and
     tables: bank data), world.bin (the overworld: bank data), towns.bin (the
@@ -629,12 +647,14 @@ def write_all(rom_path, out_dir):
         _, size, border, _ = maps.map_info(rom, town["number"])
         town_people = maps.people(rom, town)
         if town["number"] not in PEOPLE_SPRITE_MAPS:
-            town_people = onto_floor(grid, town_people)
+            town_people = onto_floor(grid, town_people, town["number"])
         extra, looks = people_looks(chr_rom, town, grid, border, town_people,
                                     sprite_table_of(rom), rom.table("RegSPPal", 12))
         image, n, free, accepted, steps = map_image(chr_rom, blocks, {b for row in grid for b in row} | {border},
                                              dungeon_plan if town["number"] >= maps.DARK_FROM else town_plan,
                                              tiles, extra, wide=town["number"] < maps.DARK_FROM)
+        if town["number"] >= maps.DARK_FROM:
+            image = dim_copies(image, free)
         wanders = [p[5] for p in town_people]
         for p, b in zip(town_people, looks):       # (Who comes and goes: the block under.)
             key = (town["number"], p[4])

@@ -192,9 +192,9 @@ BattleDLI1:
         PLA                     ;
         RTI                     ;
 BattleDLI2:
-        PHA                     ;
-        LDA #>LowerSet          ;
-        STA WSYNC               ;
+        PHA                     ;Only the set before the line's end: any
+        LDA #>LowerSet          ;more work here misses it (the band's first
+        STA WSYNC               ;line in the old set), on this row's line.
         STA CHBASE              ;
         LDA MonShow             ;(MonColors, faded: MonsterShade.)
         STA COLPF1              ;
@@ -220,49 +220,71 @@ BattleDLI2b:
         STA WSYNC               ;
         STA CHBASE              ;
 BattleNext3:
-        LDA #<BattleDLI3        ;
+        LDA DialogOn            ;The rows below: the dialog's, once it is
+        BNE Next3Dialog         ;up, else the map's (the battle's first
+        LDA #<BattleDLI3        ;frames). Chosen here, not on the line.
         STA VDSLST              ;
         LDA #>BattleDLI3        ;
         STA VDSLST+1            ;
         PLA                     ;
         RTI                     ;
+Next3Dialog:
+        LDA #<Dli3Dialog        ;
+        STA VDSLST              ;
+        LDA #>Dli3Dialog        ;
+        STA VDSLST+1            ;
+        PLA                     ;
+        RTI                     ;
 BattleDLI3:
-        PHA                     ;
-        LDA #>CharsetB          ;
+        PHA                     ;The map's rows, in set A and the colors
+        TXA                     ;the screen shows (ShownColors: an effect's
+        PHA                     ;tint, a fade, attract mode's): the set and
+        LDA #>CharsetA          ;the most seen color before the line's end.
+        LDX ShownColors+3       ;
         STA WSYNC               ;
         STA CHBASE              ;
-        LDA #$00                ;(The dialog's mode 2 rows: white on black,
-        STA COLPF2              ;the black first, for its top line.)
-        LDA #DLG_INK            ;
-        STA COLPF1              ;
-        LDA MapColors           ;
+        STX COLPF3              ;
+        LDA ShownColors         ;
         STA COLPF0              ;
-        LDA MapColors+3         ;
+        LDA ShownColors+1       ;
+        STA COLPF1              ;
+        LDA ShownColors+2       ;
+        STA COLPF2              ;
+        JMP Dli3Out             ;
+Dli3Dialog:
+        PHA                     ;The dialog's mode 2 rows: its ink on black,
+        TXA                     ;the black first, for its top line.
+        PHA                     ;
+        LDA #>CharsetB          ;
+        LDX #$00                ;
+        STA WSYNC               ;
+        STA CHBASE              ;
+        STX COLPF2              ;
+        LDA DlgInk              ;
+        STA COLPF1              ;
+        LDA ShownColors+3       ;
         STA COLPF3              ;
-        LDA MapColors+4         ;
+        LDA ShownColors         ;
+        STA COLPF0              ;
+Dli3Out:
+        LDA ShownColors+4       ;
         STA COLBK               ;
+        PLA                     ;
+        TAX                     ;
         PLA                     ;
         RTI                     ;
 
 ;Display list interrupt, at the end of the row above the dialog window
 ;while it is up: the text set and its colors from the window's first row.
 DLI:
-        PHA                     ;
-        LDA DialogOn            ;First, before the line ends, the dialog
-        BEQ DLIPeople           ;window's set from its first row: on the last
-        LDA VCOUNT              ;line above it (DlgVCount, from the VBI: or
-        SEC                     ;one more), set B at once. (Worked out after
-        SBC DlgVCount           ;the row, as the people's are, it came a line
-        CMP #$02                ;late: the window's top line was set A's.)
-        BCS DLIPeople           ;
-        LDA #>CharsetB          ;
-        STA WSYNC               ;
+        PHA                     ;Only the set before the line's end (any
+        LDA #>CharsetB          ;more, and the window's top line came in
+        STA WSYNC               ;set A: a line across the screen).
         STA CHBASE              ;
         LDA #$00                ;(Mode 2 rows: the window's black first, in
         STA COLPF2              ;time for its top line; the text's
-        LDA #DLG_INK            ;brightness.)
+        LDA DlgInk              ;brightness, faded or dimmed as the rest.)
         STA COLPF1              ;
-DLIPeople:
-DLIDone:
         PLA                     ;
+DLINone:
         RTI                     ;

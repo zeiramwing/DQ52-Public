@@ -160,7 +160,7 @@ SPECIAL = {
     0x66: [0xA4, 0xC6],                 # (the old man who has waited)
     0x67: [Shop(0xF8)],                 # (The curse lifter: the engine's step.)
     0x68: [0xA9],                       # (the warning about the hero's weapons)
-    0x6A: [0xAD],                       # (The MP restoring wizard.)
+    0x6A: [Shop(0xFC)],                 # (The MP restoring wizard: the engine's step, MP_MAN.)
     0x71: [0x03],                       # (the advice to rest with the King)
     0x72: [0x91],                       # (the advice to bring a torch)
     0x69: [Shop(0xF9)],                 # (The ring man: the engine's step.)

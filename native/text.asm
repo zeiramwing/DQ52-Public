@@ -54,20 +54,11 @@ PutTextChar:
 
 ;Open the dialog window and show the messages at MsgList.
 OpenDialog:
-        LDA #DLG_ROW            ;Clear its rows.
-        STA WinRow              ;
-*       LDA #$00                ;
-        STA WinCol              ;
-*       JSR PutChar             ;
-        INC WinCol              ;
-        LDX WinCol              ;
-        CPX #32                 ;
-        BNE -                   ;
-        INC WinRow              ;
-        LDX WinRow              ;
-        CPX #DLG_LAST+1         ;
-        BNE --                  ;
-        LDA #DLG_ROW            ;The frame, in set B.
+        JSR ClearDlgRows        ;Its rows blank (in either set), then theirs
+        LDA #$01                ;(mode 2, set B) from the next frame, the
+        STA DialogOn            ;VBI's, before anything is drawn on them
+        JSR WaitFrame           ;(drawn sooner, its frame showed a frame in
+        LDA #DLG_ROW            ;the other mode or set).
         STA WinRow              ;
         LDX #TL_TOP_LEFT        ;
         LDY #TL_TOP             ;
@@ -225,8 +216,17 @@ TextNext:
 ;A frame with the dialog window up: print a character, or wait for a
 ;button (either fire button) at a wait or past the last message.
 DialogFrame:
-        LDA DlgState            ;
-        BEQ PrintStep           ;
+        LDA DlgState            ;Printing: a letter, then TextSpeed frames
+        BNE DialogWaits         ;between (the game's MessageSpeed: fast 0,
+        LDA TextWait            ;normal 1, slow 2).
+        BEQ DialogPrint         ;
+        DEC TextWait            ;
+        RTS                     ;
+DialogPrint:
+        LDA TextSpeed           ;
+        STA TextWait            ;
+        JMP PrintStep           ;
+DialogWaits:
         CMP #$03                ;
         BNE +                   ;
         JMP YesNoFrame          ;
@@ -241,15 +241,39 @@ DialogFrame:
         STA DlgState            ;
 *       RTS                     ;
 
-CloseDialog:
+;The dialog's rows cleared: columns -5 to 36 (the normal playfield's -4
+;to 35, and the sliver more the hero hit's shake shows); code 0 is blank
+;in set A and set B alike.
+ClearDlgRows:
+        LDA #DLG_ROW            ;
+        STA WinRow              ;
+ClearDlgRow:
+        LDA #$FB                ;
+        STA WinCol              ;
         LDA #$00                ;
-        STA DialogOn            ;
-        STA Mode                ;
-        LDA #6                  ;Block rows 9-14, every column.
-        STA Rows                ;
-        LDX #0                  ;
+ClearDlgCell:
+        JSR PutChar             ;
+        INC WinCol              ;
+        LDX WinCol              ;
+        CPX #37                 ;
+        BNE ClearDlgCell        ;
+        INC WinRow              ;
+        LDX WinRow              ;
+        CPX #DLG_LAST+1         ;
+        BNE ClearDlgRow         ;
+        RTS                     ;
+
+CloseDialog:
+        JSR ClearDlgRows        ;Its rows blank first, the map's mode and
+        LDA #$00                ;set back from the next frame (the VBI's),
+        STA DialogOn            ;then the map drawn there (drawn sooner, it
+        STA Mode                ;showed in the dialog's mode for a frame).
+        JSR WaitFrame           ;
+        LDA #6                  ;Block rows 9-14, every column the clear
+        STA Rows                ;took (block columns -3 to 18).
+        LDX #$FD                ;
         LDY #9                  ;
-        LDA #16                 ;
+        LDA #22                 ;
         JMP RedrawBlocks        ;
 
 ;Print the next character: one a frame, as the game prints at its normal
@@ -342,10 +366,11 @@ NotEnemy:
         BEQ +                   ;
         DEY                     ;
         BPL -                   ;
-        BMI ++                  ;
+        BMI NotEnemyNext        ;
 *       LDA #$17                ;n
         STA InsertBuf,X         ;
         INX                     ;
+NotEnemyNext:
 *       LDA #$5F                ;
         STA InsertBuf,X         ;
         INX                     ;
@@ -430,6 +455,7 @@ AmountDigits:
 AmtPower:
         LDA #$00                ;
         STA Digit               ;
+AmtPowerLoop:
 *       LDA NumLo               ;
         SEC                     ;
         SBC PowerLo,Y           ;
@@ -441,17 +467,18 @@ AmtPower:
         LDA Tmp                 ;
         STA NumLo               ;
         INC Digit               ;
-        BNE -                   ;
+        BNE AmtPowerLoop        ;
 *       LDA Digit               ;
         ORA Lead                ;
         BNE +                   ;
         CPY #$04                ;The last digit, even 0.
-        BNE ++                  ;
+        BNE AmtPowerNext        ;
 *       LDA Digit               ;
         STA InsertBuf,X         ;Digit tiles are $00-$09.
         INX                     ;
         STA Lead                ;
         INC Lead                ;
+AmtPowerNext:
 *       INY                     ;
         CPY #$05                ;
         BNE AmtPower            ;
@@ -470,9 +497,9 @@ PrintTile:
 PrintLetter:
         PHA                     ;
         LDX Insert              ;Inside the name: no wrapping there.
-        BPL ++                  ;
+        BPL PrintLetterNext     ;
         LDX TCol                ;The first letter of a word (at the line's
-        BEQ +                   ;start, or after a space)?
+        BEQ PrintLetterNext2    ;start, or after a space)?
         LDY #$00                ;
         STX Tmp                 ;
         LDA TCol                ;
@@ -484,8 +511,10 @@ PrintLetter:
         ADC #TEXT_ROW           ;
         STA WinRow              ;
         JSR CharAt              ;
-        BNE ++                  ;Not after a space.
+        BNE PrintLetterNext     ;Not after a space.
+PrintLetterNext2:
 *       JSR WrapLetters         ;
+PrintLetterNext:
 *       LDA TCol                ;Every other letter, the text sound.
         LSR                     ;
         BCC +                   ;
@@ -504,18 +533,30 @@ PrintChar:
 *       RTS                     ;
 
 ;The word starting here (the letter just read and those after it): to the
-;next line if it does not fit on this one.
+;next line if it does not fit on this one. As the game measures one: to a
+;space, or to and with a period, comma, apostrophe or period and quote.
 WrapLetters:
         LDA #$01                ;The letter just read.
+WrapScan:
         STA Count               ;
         LDY #$00                ;
-*       LDA (TextPtr),Y         ;
+WrapNext:
+        LDA (TextPtr),Y         ;
         CMP #TL_BLANK           ;
-        BCS +                   ;
+        BCS WrapEnd             ;
         INC Count               ;
         INY                     ;
-        BNE -                   ;
-*       CMP #TX_NAME            ;A name inside a word.
+        CMP #$47                ;.
+        BEQ WrapCheck           ;
+        CMP #$48                ;,
+        BEQ WrapCheck           ;
+        CMP #$40                ;'
+        BEQ WrapCheck           ;
+        CMP #$52                ;.'
+        BNE WrapNext            ;
+        BEQ WrapCheck           ;
+WrapEnd:
+        CMP #TX_NAME            ;A name inside a word.
         BNE WrapCheck           ;
         LDA Count               ;
         CLC                     ;
@@ -523,8 +564,8 @@ WrapLetters:
         STA Count               ;
         JMP WrapCheck           ;
 WrapWord:
-        LDA InsertLen           ;The name or number, as a word.
-        STA Count               ;
+        LDA InsertLen           ;The name or number, as a word with the
+        JMP WrapScan            ;letters after it ("1." together).
 WrapCheck:
         LDA TCol                ;
         CLC                     ;
@@ -580,6 +621,7 @@ ScrollText:
 ScrollLine:
         LDA #TEXT_COL           ;
         STA WinCol              ;
+ScrollLineLoop:
 *       LDA Tmp3                ;
         CLC                     ;
         ADC #$01                ;
@@ -594,7 +636,7 @@ ScrollLine:
         INC WinCol              ;
         LDA WinCol              ;
         CMP #TEXT_COL+TEXT_WIDTH ;
-        BNE --                  ;
+        BNE ScrollLineLoop      ;
         INC Tmp3                ;
         LDA Tmp3                ;
         CMP #TEXT_ROW+TEXT_LINES ;
@@ -606,6 +648,8 @@ ScrollLine:
 ;$FFFE in MsgList: open the YES/NO window, the cursor on YES; the yes and no
 ;lists follow.
 AskYesNo:
+        LDA #SFX_CONFIRM        ;(The window up: the game's confirm sound.)
+        JSR PlaySFX             ;
         LDX #TPL_YESNO          ;
         JSR DrawTemplate        ;
         LDA #$00                ;
@@ -651,8 +695,10 @@ YesNoFrame:
         BNE YesNoDone           ;
 *       LDA Pressed             ;
         AND #BTN_A              ;
-        BNE YesNoDone           ;
+        BNE YesNoBeep           ;
         RTS                     ;
+YesNoBeep:
+        JSR Beep                ;(A choice: the menu button's sound.)
 YesNoDone:
         LDA #$00                ;
         STA YesNoOn             ;

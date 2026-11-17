@@ -1,5 +1,5 @@
 ;Test script: as pwentry, with the title and the start menu (NAME-ENTRY):
-;the upper button past the title to the start menu, down to CONTINUE and
+;the upper button past the title to the start menu, up to CONTINUE and
 ;the lower button: the password window; a password with the name A
 ;(password.py encode 1234 5000 0x75 0 0 0 3 2 0x49 0x08 0 60 40 A:
 ;YKHX VZTR J7DB TG42 KL6R AP5J L2P6 IPIQ): the name back from it, no name window. The password's
@@ -26,7 +26,7 @@ Script:
         .byte 30, 0, 0
         .byte 10, 0, 2
         .byte 90, 0, 0
-        .byte 4, 4, 0
+        .byte 4, 1, 0
         .byte 6, 0, 0
         .byte 5, 0, 1
         .byte 30, 0, 0

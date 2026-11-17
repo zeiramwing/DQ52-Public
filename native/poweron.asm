@@ -8,10 +8,97 @@
 
         .org OVERLAY_AT
 
+;The boot's setting up (main.asm's Start, with MSG_BANK in): RAM cleared, a
+;new hero, the controller and POKEY, the tables and set B, the display
+;list, the sound, the interrupt vectors. (Here for the program's room: it
+;runs once a power-on or Reset.)
+BootInit:
+        LDA #$00                ;
+        TAX                     ;Clear zero page, the game state and the
+*       STA $00,X               ;display list ($0240-$033F), the people
+        STA $0240,X             ;($0400-$07FF), player memory, the screen
+        INX                     ;and the map image.
+        BNE -                   ;
+        LDA #$04                ;
+        STA Ptr+1               ;
+        LDA #$00                ;
+        STA Ptr                 ;
+        LDY #$00                ;
+*       STA (Ptr),Y             ;
+        INY                     ;
+        BNE -                   ;
+        INC Ptr+1               ;
+        LDX Ptr+1               ;
+        CPX #$29                ;$0400-$28FF.
+        BNE -                   ;
+        LDX #NEW_GAME_SIZE-1    ;A new hero.
+*       LDA NewGame,X           ;
+        STA HeroName,X          ;
+        DEX                     ;
+        BPL -                   ;
+        LDX #$00                ;The name's letters, before its blanks.
+*       LDA HeroName,X          ;
+        CMP #$5F                ;
+        BCS +                   ;
+        INX                     ;
+        CPX #$08                ;
+        BNE -                   ;
+*       STX NameLen             ;
+        JSR NameStats           ;The name's part in the stats.
+        LDA #$06                ;
+        STA CmdDownMax          ;
+        LDA #$A5                ;
+        STA Random              ;
+        STA Random+1            ;
+
+        LDA #HERO_HPOS          ;
+        JSR HeroAt              ;
+        LDA #$00                ;
+        STA IRQEN               ;
+        STA POTGO               ;
+        LDA #$02                ;
+        STA SKCTL               ;Scan the keypad (and the top fire button).
+        LDA #$04                ;The pots on (the stick's), controller 1:
+        STA CONSOL              ;without this they read 0, up and left.
+        LDA #$FF                ;
+        STA CurBank             ;
+        STA Shown               ;
+        LDX #<BootTables        ;The tables to RAM (in another bank: through
+        LDY #>BootTables        ;FarOut).
+        JSR FarOut              ;
+        LDA #$FF                ;
+        STA Shown               ;
+        LDA #START_FACING       ;Facing down (or up, before the King).
+        STA Facing              ;
+        JSR BuildDList          ;
+        JSR InitSound           ;
+        LDA #<VBI               ;
+        STA VVBLKI              ;
+        LDA #>VBI               ;
+        STA VVBLKI+1            ;
+        LDA #<DLI               ;
+        STA VDSLST              ;
+        LDA #>DLI               ;
+        STA VDSLST+1            ;
+        RTS                     ;
+
+;A new hero: the name (in text tiles, padded with blanks), level, HP, MP,
+;gold and experience.
+NewGame:
+.include "name.asm"
+        .byte START_LEVEL, START_HP-START_HURT, START_MP-START_DRAIN ;(Level 1, all HP, but in tests.)
+        .word START_GOLD, START_EXP ;Gold, experience (0 but in tests).
+        .byte START_HP, START_MP, START_STR, START_AGI ;Max HP, max MP, strength, agility.
+        .byte START_EQUIP, START_KEYS, 0 ;Equipment, keys (none but in tests), herbs.
+        .byte START_INV0, START_INV1, START_INV2, START_INV3 ;Items (none but in tests),
+        .byte START_FLAGS       ;the flags (ModFlags: none but in tests).
+
 .alias NameMode         $07B1   ;The window: 0 the password's, 1 the name's.
 .alias GridLast         $07B2   ;Its grid's last cell (the name's: END).
 .alias NAME_MAX         8       ;
 .alias PwOk             $07B4   ;A password was right (the name asked for).
+.alias MSC_INTRO        $01     ;The title's music (the game's DoIntroRoutine),
+.alias MSC_VILLAGE      $04     ;and the start menu's (its pre-game windows').
 .alias TitleOn          $07BB   ;The title: 1 shown, 2 gone.
 .alias TITLE_ROWS       28      ;
 
@@ -31,6 +118,10 @@ PasswordFrame:
         LDX #<TitleShow         ;
         LDY #>TitleShow         ;
         JSR FarOut              ;
+        LDA #$00                ;The screen on, the title drawn (the map
+        STA Loading             ;behind it was loaded quietly).
+        LDA #MSC_INTRO          ;
+        JSR PlayMusic           ;
         LDX #2+3*TITLE_TEXT     ;Its text rows mode 2 (LMS, VSCROL,
 TitleMode2:                     ;HSCROL), the row above with TitleDLI.
         LDA #$72                ;
@@ -40,9 +131,27 @@ TitleMode2:                     ;HSCROL), the row above with TitleDLI.
         INX                     ;
         CPX #2+3*TITLE_ROWS     ;
         BNE TitleMode2          ;
-        LDA DList+2+3*TITLE_TEXT-3 ;
+        LDY #$00                ;An interrupt on the row before each band
+TitleBandBits:                  ;(TitleDLI).
+        CPY #TITLE_BANDS*5      ;
+        BEQ TitleBandsSet       ;
+        LDA TitleBands,Y        ;
+        STA Tmp                 ;
+        ASL                     ;
+        CLC                     ;
+        ADC Tmp                 ;
+        CLC                     ;
+        ADC #$02                ;
+        TAX                     ;
+        LDA DList,X             ;
         ORA #$80                ;
-        STA DList+2+3*TITLE_TEXT-3 ;
+        STA DList,X             ;
+        TYA                     ;
+        CLC                     ;
+        ADC #$05                ;
+        TAY                     ;
+        JMP TitleBandBits       ;
+TitleBandsSet:
         INC TitleOn             ;
         RTS                     ;
 TitleWait:
@@ -56,18 +165,22 @@ TitleUp:
         CMP #KEY_START          ;Start), the name window; the upper, the
         BNE +                   ;password's.
         LDA #BTN_A              ;
-        BNE ++                  ;
+        BNE TitleUpNext         ;
 *       LDA Pressed             ;
         AND #BTN_A+BTN_B        ;
         BNE +                   ;
         RTS                     ;
+TitleUpNext:
 *       LDX #<TitleEnd          ;Then the start menu, on a blank screen.
         LDY #>TitleEnd          ;
         JSR FarOut              ;
         LDA #$06                ;(LoadMap leaves Mode 0.)
         STA Mode                ;
         JSR BlankView           ;
-        JMP MenuOpen            ;
+        JSR MenuOpen            ;
+        LDA #$00                ;The screen on, the menu drawn (the map
+        STA Loading             ;behind it reloaded quietly).
+        RTS                     ;
 PwNoTitle:
         LDA Buttons             ;
         AND #BTN_B              ;
@@ -166,7 +279,7 @@ PwEntering:
         BCS +                   ;
         INX                     ;
 *       LSR                     ;Down: a row down (from the name's last
-        BCC ++                  ;row, END).
+        BCC PwEnteringNext      ;row, END).
         PHA                     ;
         TXA                     ;
         CLC                     ;
@@ -180,6 +293,7 @@ PwEntering:
         TXA                     ;
 *       TAX                     ;
         PLA                     ;
+PwEnteringNext:
 *       LSR                     ;Left.
         BCC +                   ;
         CPX #$00                ;
@@ -210,9 +324,11 @@ PwToMenu:
 PwEnter:
         LDA Pressed             ;
         AND #BTN_A              ;
-        BNE +                   ;
+        BNE PwEnterBeep         ;
         RTS                     ;
-*       LDA NameMode            ;
+PwEnterBeep:
+        JSR Beep                ;(A choice: the menu button's sound.)
+        LDA NameMode            ;
         BEQ PwType              ;
         LDA PwCur               ;
         CMP #32                 ;
@@ -304,6 +420,7 @@ NameEnd:
         BEQ PwTyped             ;
         STA Tmp                 ;
         LDX #NAME_MAX-1         ;
+NameEndLoop:
 *       LDA #TL_BLANK           ;
         CPX Tmp                 ;
         BCS +                   ;
@@ -311,7 +428,7 @@ NameEnd:
         LDA NameTiles,Y         ;
 *       STA HeroName,X          ;
         DEX                     ;
-        BPL --                  ;
+        BPL NameEndLoop         ;
         LDX #NAME_MAX           ;Its length: up to the last that is not
 *       DEX                     ;blank.
         BEQ +                   ;
@@ -514,18 +631,20 @@ PwNameChar:
         JSR SelectMsg           ;(The level tables' bank.)
         LDA #$01                ;The level the experience is, its stats,
         STA Level               ;HP and MP full.
+PwNameCharLoop:
 *       LDX Level               ;
         CPX #30                 ;
-        BCS ++                  ;
+        BCS PwNameCharNext      ;
         LDA Experience+1        ;
         CMP LevelExpHi,X        ;
-        BCC ++                  ;
+        BCC PwNameCharNext      ;
         BNE +                   ;
         LDA Experience          ;
         CMP LevelExpLo,X        ;
-        BCC ++                  ;
+        BCC PwNameCharNext      ;
 *       INC Level               ;
-        BNE --                  ;
+        BNE PwNameCharLoop      ;
+PwNameCharNext:
 *       DEX                     ;
         LDA LevelStr,X          ;
         STA Strength            ;
@@ -641,7 +760,23 @@ CrScreen:
 CrLine:
         JSR CrByte              ;Its rows: row, column, length, tiles.
         CMP #$FF                ;
-        BEQ ++                  ;
+        BEQ CrLinesDone         ;
+        CMP #$FD                ;A picture's characters (the last two
+        BNE CrRowAt             ;screens'): their count, then each's 8
+        JSR CrByte              ;bytes, over the capitals' (build.py).
+        ASL                     ;
+        ASL                     ;
+        ASL                     ;
+        STA Count               ;
+        LDX #$00                ;
+CrGlyph:
+        JSR CrByte              ;(Y lost, X kept.)
+        STA CR_GLYPHS_AT,X      ;
+        INX                     ;
+        CPX Count               ;
+        BNE CrGlyph             ;
+        BEQ CrLine              ;
+CrRowAt:
         STA WinRow              ;
         JSR CrByte              ;
         STA WinCol              ;
@@ -652,7 +787,8 @@ CrLine:
         DEC Count               ;
         BNE -                   ;
         BEQ CrLine              ;
-*       RTS                     ;
+CrLinesDone:
+        RTS                     ;
 
 ;A = the credits' next byte (through Ptr, which PutTileA also uses).
 CrByte:
@@ -740,6 +876,7 @@ PwScramble:
         LDA PwBuf+PW_BODY       ;
         STA PwKey               ;
         LDY #$00                ;
+PwScrambleLoop:
 *       LDA PwKey               ;
         EOR PwBuf,Y             ;
         STA PwBuf,Y             ;
@@ -753,7 +890,7 @@ PwScramble:
         STA PwKey               ;
         INY                     ;
         CPY #PW_BODY            ;
-        BNE -                   ;
+        BNE PwScrambleLoop      ;
         RTS                     ;
 
 ;A = the CRC-8 of PwBuf's first PW_BODY bytes.
@@ -763,11 +900,12 @@ PwCheck:
 PwCrcByte:
         EOR PwBuf,Y             ;
         LDX #$08                ;
+PwCrcByteLoop:
 *       ASL                     ;
         BCC +                   ;
         EOR #$07                ;
 *       DEX                     ;
-        BNE --                  ;
+        BNE PwCrcByteLoop       ;
         INY                     ;
         CPY #PW_BODY            ;
         BNE PwCrcByte           ;
@@ -946,22 +1084,24 @@ StepEndWait:
 *       INC EndPhase            ;
         LDA EndPhase            ;
         CMP #$01                ;
-        BNE ++                  ;
+        BNE StepEndWaitNext     ;
         LDX #<CloseDialog       ;(It redraws the map: a bank change.)
         LDY #>CloseDialog       ;
         JSR FarOut              ;
         LDA #$04                ;(Still the ending's steps.)
         STA Mode                ;
         LDA #$01                ;Facing right.
+StepEndWaitLoop:
 *       STA Facing              ;
         LDA #$FF                ;(Drawn again.)
         STA Shown               ;
         LDA #30                 ;
         BNE EndWait             ;
+StepEndWaitNext:
 *       CMP #$02                ;
         BNE +                   ;
         LDA #$02                ;Facing down.
-        BNE --                  ;
+        BNE StepEndWaitLoop     ;
 *       LDA #MSC_END            ;The end music, and after its first part,
         JSR PlayMusic           ;the credits (poweron.asm).
         LDA #<CREDITS_AT        ;
@@ -979,78 +1119,131 @@ StepEndWait:
 
 ;--------------------------------------[The start menu]---------------------------------------------
 
-;After the title (the play build), on a blank screen: NEW GAME (the name
-;window) or CONTINUE (the password window); the stick up or down, the lower
-;button or the keypad's Start to choose. (Its words are the port's own.)
-.alias MenuSel          $07C6   ;0 NEW GAME, 1 CONTINUE.
+;After the title (the play build), on a blank screen, the game's own start
+;menu words (build.py's menuwords.asm, from the ROM's window data): continue
+;a quest (the password window), begin a new quest (the name window), change
+;the message speed (each choice the next; the speed shown below it, the
+;game's word for it). (The game's order has the speed second: last here,
+;so its word is under it.) The stick up or down, the lower button or the
+;keypad's Start to choose; the cursor starts on the new quest.
+.alias MenuSel          $07C6   ;0 continue, 1 a new quest, 2 the speed.
 .alias ME_ROW           10      ;
-.alias ME_COL           10      ;
 MenuOpen:
-        LDA #$02                ;
+        LDA Song                ;The pre-game music, unless it is on (back
+        CMP #MSC_VILLAGE        ;from the name or password window).
+        BEQ +                   ;
+        LDA #MSC_VILLAGE        ;
+        JSR PlayMusic           ;
+*       LDA #$02                ;
         STA TitleOn             ;
+        LDA #$01                ;
+        STA MenuSel             ;
         LDA #$00                ;
         STA PwLen               ;
-        STA MenuSel             ;
         STA Pressed             ;
         LDA #ME_ROW             ;
         STA WinRow              ;
         LDA #ME_COL             ;
         STA WinCol              ;
-        LDA #2                  ;
+        LDA #4                  ;
         STA Rows                ;
-        LDA #10                 ;
+        LDA #ME_LEN+3           ;
         STA PwW                 ;
         JSR PwFrame             ;
-        LDX #$00                ;
+        LDX #$00                ;The game's lines: continue,
         LDA #ME_ROW+1           ;
         JSR MenuLine            ;
+        LDX #2*ME_LEN           ;a new quest,
         LDA #ME_ROW+2           ;
         JSR MenuLine            ;
+        LDX #ME_LEN             ;the speed.
+        LDA #ME_ROW+3           ;
+        JSR MenuLine            ;
+        JSR MenuSpeed           ;
         JMP MenuArrow           ;
-;Row A: MenuWords from X (8 letters), X past them.
+;Row A: MenuWords from X (ME_LEN tiles), X past them.
 MenuLine:
         STA WinRow              ;
         LDA #ME_COL+2           ;
         STA WinCol              ;
-*       LDA MenuWords,X         ;
+        LDA #ME_LEN             ;
+        STA PwT2                ;
+MenuLetter:
+        LDA MenuWords,X         ;
         STX PwT1                ;
         JSR PutTileA            ;
         LDX PwT1                ;
         INX                     ;
-        TXA                     ;
-        AND #$07                ;
-        BNE -                   ;
+        DEC PwT2                ;
+        BNE MenuLetter          ;
         RTS                     ;
-MenuWords:      .byte $31, $28, $3A, $5F, $2A, $24, $30, $28 ;NEW GAME
-                .byte $26, $32, $31, $37, $2C, $31, $38, $28 ;CONTINUE
-;The cursor at the choice, a blank at the other.
-MenuArrow:
-        LDA #ME_COL+1           ;
-        STA WinCol              ;
-        LDA #ME_ROW+1           ;
+;The speed's row, below the choices: its word for TextSpeed.
+MenuSpeed:
+        LDA #ME_ROW+4           ;
         STA WinRow              ;
-        LDA MenuSel             ;(NEW GAME's row: the arrow at 0.)
-        JSR MenuMark            ;
+        LDA #ME_COL+4           ;
+        STA WinCol              ;
+        LDX TextSpeed           ;
+        LDA SpeedAt,X           ;
+        TAX                     ;
+        LDA #SPEED_LEN          ;
+        STA PwT2                ;
+SpeedLetter:
+        LDA SpeedText,X         ;
+        STX PwT1                ;
+        JSR PutTileA            ;
+        LDX PwT1                ;
+        INX                     ;
+        DEC PwT2                ;
+        BNE SpeedLetter         ;
+        RTS                     ;
+SpeedAt:        .byte 0, SPEED_LEN, 2*SPEED_LEN
+.include "menuwords.asm"
+;The cursor at the choice, blanks at the others.
+MenuArrow:
+        LDY #$00                ;
+MenuArrowRow:
         LDA #ME_COL+1           ;
         STA WinCol              ;
-        INC WinRow              ;
-        LDA MenuSel             ;
-        EOR #$01                ;
-MenuMark:
-        BEQ +                   ;(A 0: the arrow.)
+        TYA                     ;
+        CLC                     ;
+        ADC #ME_ROW+1           ;
+        STA WinRow              ;
         LDA #TL_BLANK           ;
-        JMP PutTileA            ;
-*       LDA #TL_ARROW           ;
-        JMP PutTileA            ;
+        CPY MenuSel             ;
+        BNE MenuNoArrow         ;
+        LDA #TL_ARROW           ;
+MenuNoArrow:
+        STY PwT1                ;
+        JSR PutTileA            ;
+        LDY PwT1                ;
+        INY                     ;
+        CPY #3                  ;
+        BNE MenuArrowRow        ;
+        RTS                     ;
 MenuFrame:
-        LDA StickNew            ;Up or down: the other.
-        AND #$05                ;
-        BEQ +                   ;
-        LDA MenuSel             ;
-        EOR #$01                ;
-        STA MenuSel             ;
+        LDA StickNew            ;Up: the one above (round to the last).
+        AND #$01                ;
+        BEQ MenuNotUp           ;
+        LDX MenuSel             ;
+        DEX                     ;
+        BPL MenuMove            ;
+        LDX #2                  ;
+        BNE MenuMove            ;
+MenuNotUp:
+        LDA StickNew            ;Down: the one below (round to the first).
+        AND #$04                ;
+        BEQ MenuNotDown         ;
+        LDX MenuSel             ;
+        INX                     ;
+        CPX #3                  ;
+        BNE MenuMove            ;
+        LDX #0                  ;
+MenuMove:
+        STX MenuSel             ;
         JSR MenuArrow           ;
-*       LDA KeyNew              ;
+MenuNotDown:
+        LDA KeyNew              ;
         CMP #KEY_START          ;
         BEQ MenuPick            ;
         LDA Pressed             ;
@@ -1058,12 +1251,25 @@ MenuFrame:
         BNE MenuPick            ;
         RTS                     ;
 MenuPick:
-        LDA #$03                ;
-        STA TitleOn             ;
+        JSR Beep                ;(A choice: the menu button's sound.)
         LDA #$00                ;
         STA Pressed             ;
+        LDA MenuSel             ;The speed: the next one, shown.
+        CMP #2                  ;
+        BNE MenuGo              ;
+        LDX TextSpeed           ;
+        INX                     ;
+        CPX #3                  ;
+        BNE MenuSetSpeed        ;
+        LDX #0                  ;
+MenuSetSpeed:
+        STX TextSpeed           ;
+        JMP MenuSpeed           ;
+MenuGo:
+        LDA #$03                ;
+        STA TitleOn             ;
         LDA MenuSel             ;
-        BEQ +                   ;
+        BNE +                   ;
         JMP PwOpen              ;
 *       JMP NameOpen            ;
 
@@ -1071,11 +1277,12 @@ MenuPick:
 BlankView:
         LDA #$00                ;
         STA CrRow               ;
+BlankViewLoop:
 *       LDA CrRow               ;
         STA WinRow              ;
-        LDA #$00                ;
-        STA WinCol              ;
-        LDA #32                 ;
+        LDA #$FB                ;Columns -5 to 36: the normal playfield's
+        STA WinCol              ;and a column more each side.
+        LDA #42                 ;
         STA Count               ;
 *       LDA #TL_BLANK           ;
         JSR PutTileA            ;
@@ -1084,7 +1291,7 @@ BlankView:
         INC CrRow               ;
         LDA CrRow               ;
         CMP #28                 ;
-        BNE --                  ;
+        BNE BlankViewLoop       ;
         RTS                     ;
 
 ;------------------------------------[A full bag (DiscardItem)]--------------------------------------
@@ -1160,3 +1367,280 @@ StepDsGot:
 NoDrop:
         .byte HERB_ITEM, KEY_ITEM, ITM_BASE+5, ITM_BASE+7, ITM_BASE+8
         .byte ITM_BASE+10, ITM_BASE+12, ITM_BASE+13, ITM_BASE+14
+
+;--------------------------------------[Story steps (from castle.asm)]------------------------------
+
+;The special characters' steps, run here for the program's room: the
+;Dragonlord's offer and LordStep's dispatch (StepStart enters it with
+;MSG_BANK selected), the rainbow drop's and the staff of rain's keepers,
+;the MP wizard, the princess's question and the King's keepsake, the curse
+;lifter and the ring man. Their calls that change banks go through FarOut.
+
+;His offer refused: the fight. Taken: all the hero had is gone (ZeroStats)
+;and the game ends there, the dialog's last message up.
+LordStep:
+        LDA #$00                ;
+        STA ShopState           ;
+        LDA ShopCtl             ;
+        CMP #RAINBOW_MAN        ;
+        BEQ RainbowMan          ;
+        CMP #RAIN_MAN           ;
+        BEQ RainMan             ;
+        CMP #GWAELIN            ;
+        BNE +                   ;
+        JMP GwaelinAsk          ;
+*       CMP #KING_GW            ;
+        BNE +                   ;
+        JMP KingGwStep          ;
+*       CMP #PW_SHOW            ;
+        BNE +                   ;
+        JMP PwShowP             ;
+*       CMP #CURSE_MAN          ;
+        BNE +                   ;
+        JMP CurseMan            ;
+*       CMP #RING_MAN           ;
+        BNE +                   ;
+        JMP RingMan             ;
+*       CMP #MP_MAN             ;
+        BNE +                   ;
+        JMP MpMan               ;
+*       CMP #ENDING             ;(Steps in MSG_BANK: run next.)
+        BNE +                   ;
+        LDA #EG_END             ;
+        STA ShopState           ;
+        RTS                     ;
+*       CMP #DS_FULL            ;(Steps in MSG_BANK: run next.)
+        BNE +                   ;
+        LDA #DS_ASK             ;
+        STA ShopState           ;
+        RTS                     ;
+*       CMP #END_GW             ;
+        BNE +                   ;
+        LDA #EG_ASK             ;
+        STA ShopState           ;
+        RTS                     ;
+*
+        CMP #LORD_JOIN          ;
+        BEQ LordJoin            ;
+        LDX #<CloseDialog       ;(It redraws the map: through FarOut.)
+        LDY #>CloseDialog       ;
+        JSR FarOut              ;
+        LDA #EN_DRAGONLORD      ;
+        JMP StartBattle         ;
+LordJoin:
+        LDA #$00                ;Gold and experience,
+        LDX #$03                ;
+*       STA Gold,X              ;
+        DEX                     ;
+        BPL -                   ;
+        LDX #ModFlags-Equipped  ;and the equipment, keys, herbs, items and
+*       STA Equipped,X          ;flags.
+        DEX                     ;
+        BPL -                   ;
+        JSR RedrawStatus        ;
+        LDA #LORD_END           ;
+        STA ShopState           ;
+StepLordEnd:
+        RTS                     ;
+
+;The old man of the rainbow drop's cave (the game's $6D dialog): with the
+;drop already, nothing for the hero; without Erdrick's token, the hero is
+;sent out of the cave; with it, the stones of sunlight and the staff of
+;rain become the rainbow drop, or he says what is wanted.
+RainbowMan:
+        LDA #ITM_DROP           ;
+        JSR HasItem             ;
+        BCC +                   ;
+        LDA #$A5                ;He has nothing for the hero.
+        JMP ShopEnd             ;
+*       LDA #ITM_TOKEN          ;
+        JSR HasItem             ;
+        BCS +                   ;
+        LDA #$B3                ;The task failed: out of the cave.
+        LDX #RM_EXIT            ;
+        JMP ShopSay             ;
+*       LDA #ITM_STONES         ;
+        JSR HasItem             ;
+        BCC RainbowNot          ;
+        LDA #ITM_STAFF          ;
+        JSR HasItem             ;
+        BCC RainbowNot          ;
+        LDA #ITM_STONES         ;The sun and the rain meet: the drop.
+        JSR RemoveItem          ;
+        LDA #ITM_STAFF          ;
+        JSR RemoveItem          ;
+        LDA #ITM_DROP           ;
+        JSR AddItem             ;
+        LDA #30                 ;The screen grey for half a second.
+        STA GreyTime            ;
+        LDA #$B4                ;
+        JMP ShopEnd             ;
+RainbowNot:
+        LDA #$49                ;What the bridge wants,
+        LDX #RM_MORE            ;
+        JMP ShopSay             ;
+StepRmMore:
+        LDA #$AE                ;and that he has waited.
+        JMP ShopEnd             ;
+
+;The old man of the staff of rain's cave (the game's $6C dialog): with the
+;drop or the staff already, nothing for the hero; with the silver harp, it
+;is taken and he goes, leaving the staff's chest free; else his test.
+RainMan:
+        LDA #ITM_DROP           ;
+        JSR HasItem             ;
+        BCS +                   ;
+        LDA #ITM_STAFF          ;
+        JSR HasItem             ;
+        BCC RainManNext         ;
+*       LDA #$A5                ;He has nothing for the hero.
+        JMP ShopEnd             ;
+RainManNext:
+*       LDA #ITM_HARP           ;
+        JSR HasItem             ;
+        BCS +                   ;
+        LDA #$B1                ;His test.
+        JMP ShopEnd             ;
+*       LDA #ITM_HARP           ;The harp taken, and he goes (the only one
+        JSR RemoveItem          ;there: no one left on the map).
+        JSR CondHere            ;(His block what was under him.)
+        LDA #$00                ;
+        STA PeopleOn            ;
+        LDA #<RainTalk          ;What he says.
+        LDY #>RainTalk          ;
+        JMP SayList             ;
+
+RainTalk:       .word $00B2, $00A4, $00C6, $FFFF
+
+;Sent out: by the cave's link, facing down (CheckMapExit).
+StepRmExit:
+        LDA #FX_SPELL           ;The screen grey and back first, as the
+        LDX #40                 ;game's BWScreenFlash, then out.
+        JSR StartFx             ;
+RmExitWait:
+        LDA FxTime              ;
+        BNE RmExitWait          ;
+        LDA #$00                ;
+        STA ShopState           ;
+        JMP LeaveMap            ;
+
+;The wizard who gives MP back (the game's $6A dialog): his words, the
+;screen grey and back (BWScreenFlash), and all the hero's MP.
+MpMan:
+        LDA #FX_SPELL           ;
+        LDX #40                 ;
+        JSR StartFx             ;
+        LDA MaxMP               ;
+        STA MagicPoints         ;
+        JSR RedrawStatus        ;
+        LDA #$AD                ;
+        JMP ShopEnd             ;
+
+GwaelinAsk:
+        LDA #$C5                ;
+        LDX #GW_ASKED           ;
+        JMP ShopAsk             ;
+StepGwAsked:
+        LDA Answer              ;
+        BEQ +                   ;
+        LDA #$B6                ;NO: she asks again.
+        LDX #GW_AGAIN           ;
+        JMP ShopSay             ;
+*       LDA ModFlags            ;YES: she is carried, her block floor.
+        ORA #F_CARRY            ;
+        STA ModFlags            ;
+        LDA #PRINCESS_X         ;
+        STA BX                  ;
+        LDA #PRINCESS_Y         ;
+        STA BY                  ;
+        LDA #BLK_BRICK          ;
+        LDX #<SetBlock          ;(It reads and draws the map: through
+        LDY #>SetBlock          ;FarOut.)
+        JSR FarOut              ;
+        LDA #$00                ;
+        STA ShopState           ;
+        RTS                     ;
+
+KingGwStep:
+        LDA ModFlags            ;
+        AND #$FF-F_CARRY        ;
+        ORA #F_RETURNED         ;
+        STA ModFlags            ;
+        LDA #ITM_LOVE           ;
+        JSR AddItem             ;
+        BCC StepGwKeep          ;
+        LDA #$00                ;Full: the first of KeepTake held is taken
+        STA ShopTmpI            ;for it (none: no keepsake).
+*       LDX ShopTmpI            ;
+        LDA KeepTake,X          ;
+        JSR HasItem             ;
+        BCS +                   ;
+        INC ShopTmpI            ;
+        LDA ShopTmpI            ;
+        CMP #$07                ;
+        BNE -                   ;
+        BEQ StepGwKeep          ;
+*       LDX ShopTmpI            ;
+        LDA KeepTake,X          ;
+        PHA                     ;
+        JSR RemoveItem          ;
+        PLA                     ;
+        CLC                     ;
+        ADC #ITM_BASE           ;
+        STA ItemName            ;
+        LDA #ITM_LOVE           ;
+        JSR AddItem             ;
+        LDA #$BA                ;And something of the hero's for the King.
+        LDX #GW_KEEP            ;
+        JMP ShopSay             ;
+StepGwKeep:
+        LDA #$BB                ;
+        LDX #GW_BYE             ;
+        JMP ShopSay             ;
+;What the King may take for it (InvListTbl): torch, dragon's scale,
+;fighter's ring, fairy water, wings, cursed belt, staff of rain.
+KeepTake:       .byte 1, 4, 6, 2, 3, 9, 13
+StepGwBye:
+        LDA #$BC                ;
+        JMP ShopEnd             ;
+
+;The curse lifter (ChkCursedDialog): not cursed, come again; else the
+;cursed items gone and the curse with them.
+CurseMan:
+        LDA Flags2              ;
+        AND #F2_CURSED          ;
+        BNE +                   ;
+        LDA #$A6                ;
+        JMP ShopEnd             ;
+*       BPL +                   ;(Bit 7: the necklace.)
+        LDA #$0B                ;
+        JSR RemoveItem          ;
+*       BIT Flags2              ;
+        BVC +                   ;
+        LDA #$09                ;
+        JSR RemoveItem          ;
+*       LDA Flags2              ;
+        AND #$FF-F2_CURSED      ;
+        STA Flags2              ;
+        LDA #$A7                ;
+        LDX #CF_DONE            ;
+        JMP ShopSay             ;
+StepCfDone:
+        LDA #$A8                ;
+        JMP ShopEnd             ;
+
+;The ring man (ChkRingDialog): wearing it (it still had), his other words.
+RingMan:
+        LDA #$06                ;
+        JSR HasItem             ;
+        BCS +                   ;
+        LDA Flags2              ;
+        AND #$FF-F2_RING        ;
+        STA Flags2              ;
+*       LDA Flags2              ;
+        LSR                     ;
+        LDA #$AC                ;
+        BCC +                   ;
+        LDA #$AB                ;
+*       JMP ShopEnd             ;
+

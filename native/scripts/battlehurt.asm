@@ -31,4 +31,6 @@ Script:
         .byte 80, 0, 0
         .byte 5, 0, 1
         .byte 80, 0, 0
+        .byte 5, 0, 1
+        .byte 80, 0, 0
         .byte 0

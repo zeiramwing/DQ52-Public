@@ -34,6 +34,7 @@
 SpellList:
         LDX #$00                ;
         LDY #$00                ;
+SpellListLoop:
 *       LDA Level               ;
         CMP SpellLevel,X        ;
         BCC +                   ;
@@ -44,7 +45,7 @@ SpellList:
         INY                     ;
 *       INX                     ;
         CPX #10                 ;
-        BNE --                  ;
+        BNE SpellListLoop       ;
         STY ListCount           ;
         RTS                     ;
 
@@ -93,6 +94,9 @@ PayMP:
         JSR RedrawStatus        ;
         LDA #SFX_SPELL          ;
         JSR PlaySFX             ;
+        LDA #FX_SPELL           ;
+        LDX #40                 ;
+        JSR StartFx             ;
         LDA #$30                ;
         RTS                     ;
 
@@ -131,7 +135,7 @@ StepSpCast:
         STA RepelTime           ;
         RTS                     ;
 *       CMP #SPL_RADIANT        ;Only in the dark: the light 7 blocks wide.
-        BNE +                   ;
+        BNE StepSpCastNext      ;
         LDA Dark                ;
         BEQ SpellFizzle         ;
         LDA #$50                ;
@@ -144,8 +148,9 @@ StepSpCast:
         JSR PlaySFX             ;
         JSR CloseDialog         ;
         JMP RedrawLight         ;
+StepSpCastNext:
 *       CMP #SPL_OUTSIDE        ;Out of a cave, by its own entrance
-        BNE +                   ;(OutsideMap), facing down.
+        BNE StepSpCastNext2     ;(OutsideMap), facing down.
         LDX MapId               ;
         LDA OutsideMap          ;
         CMP #$FF                ;
@@ -156,6 +161,7 @@ StepSpCast:
         TAX                     ;
         PLA                     ;
         JMP SpellGo             ;
+StepSpCastNext2:
 *       CMP #SPL_RETURN         ;Not in the dark: beside Tantegel, as the
         BNE SpellFizzle         ;wings.
         LDA Dark                ;(Nor on the Dragonlord's floor.)
@@ -163,6 +169,8 @@ StepSpCast:
         LDA MapId               ;
         CMP #CASTLE_BF          ;
         BEQ SpellFizzle         ;
+        LDA #SFX_WINGS          ;(The flight's sound, as the wings'.)
+        JSR PlaySFX             ;
         LDX #RETURN_X           ;
         LDY #RETURN_Y           ;
         LDA #$00                ;
@@ -207,11 +215,11 @@ HealBy:
 ;or the fairy water's). C set if a message is up.
 StepTimers:
         LDA RadiantTime         ;
-        BEQ ++                  ;
+        BEQ StepTimersNext      ;
         DEC RadiantTime         ;
-        BNE ++                  ;
+        BNE StepTimersNext      ;
         LDA LightR              ;
-        BEQ ++                  ;
+        BEQ StepTimersNext      ;
         LDA #60                 ;
         STA RadiantTime         ;
         DEC LightR              ;
@@ -226,6 +234,7 @@ StepTimers:
         LDA RepelTime           ;
         CMP #$01                ;
         BEQ RepelEnd            ;
+StepTimersNext:
 *       CLC                     ;
         RTS                     ;
 RepelEnd:
@@ -521,6 +530,9 @@ EnPhys:
 StepEnChant:
         LDA #SFX_SPELL          ;
         JSR PlaySFX             ;
+        LDA #FX_ENSPELL         ;
+        LDX #25                 ;
+        JSR StartFx             ;
         LDA #$FD                ;Its spell's name.
         LDX #B_ENSPELL          ;
         JMP Say                 ;
@@ -543,7 +555,7 @@ StepEnSpell:
         LDX #B_HASLEEP          ;
         JMP SayHi               ;
 *       CMP #SPL_STOPSPELL      ;
-        BNE ++                  ;
+        BNE StepEnSpellNext     ;
         LDA Equipped            ;
         AND #ARMOR_BITS         ;
         CMP #ERDRICK_ARMOR      ;
@@ -559,6 +571,7 @@ StepEnSpell:
 *       LDA #$EB                ;
         LDX #B_ROUND            ;
         JMP Say                 ;
+StepEnSpellNext:
 *       LDY #3                  ;
         LDX #$07                ;
         CMP #SPL_HURT           ;
@@ -579,9 +592,10 @@ StepEnSpell:
         BCS +                   ;
         LDX Enemy               ;
         CMP EnemyMaxHP                ;
-        BCC ++                  ;
+        BCC StepEnSpellNext2    ;
 *       LDX Enemy               ;
         LDA EnemyMaxHP                ;
+StepEnSpellNext2:
 *       STA EnemyHP             ;
         LDA #$09                ;The enemy has recovered.
         LDX #B_ROUND            ;
@@ -653,17 +667,19 @@ UnderRow:
         LDA #LIST_COL           ;
         STA WinCol              ;
         LDY #$00                ;
+UnderRowLoop:
 *       BIT ShopTmpN            ;
         BMI +                   ;
         JSR GetChar             ;
         STA (NamePtr),Y         ;
-        JMP ++                  ;
+        JMP UnderRowNext        ;
 *       LDA (NamePtr),Y         ;
         JSR PutChar             ;
+UnderRowNext:
 *       INC WinCol              ;
         INY                     ;
         CPY #LIST_RIGHT-LIST_COL+1 ;
-        BNE ---                 ;
+        BNE UnderRowLoop        ;
         TYA                     ;
         CLC                     ;
         ADC NamePtr             ;
@@ -724,12 +740,13 @@ StepItBattle:
         LDX #MSC_HARP           ;
         LDY #$41                ;or the harp played.
         CMP #HARP_ITEM          ;
-        BNE ++                  ;
+        BNE StepItBattleNext    ;
 *       TXA                     ;
         JSR PlayMusic           ;
         TYA                     ;
         LDX #B_TUNE             ;
         JMP Say                 ;
+StepItBattleNext:
 *       CMP #SCALE_ITEM         ;
         BNE +                   ;
         JSR WearScale           ;

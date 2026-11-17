@@ -4,17 +4,32 @@
 ;script is in MSG_BANK at SCRIPT_AT (build.py puts it there, out of the
 ;program's room), read through ScriptPtr, any length.
 .alias ScriptPtr        $7C     ;2: the entry being played.
+.alias ResetPtr         $3FF0   ;2: kept over the keypad's Reset (RAM not cleared
+.alias ResetMark        $3FF2   ;at boot), and RESET_MAGIC there while it is.
+.alias RESET_MAGIC      $A5     ;
 
 ReadInput:
         LDA CurBank             ;(The bank in, kept.)
         PHA                     ;
         JSR SelectMsg           ;
-        LDA ScriptPtr+1         ;The first: the script's start.
+        LDA ScriptPtr+1         ;The first: the script's start (or, after
+        BNE ScriptStartNext     ;the keypad's Reset, the entry after it's).
+        LDA ResetMark           ;
+        CMP #RESET_MAGIC        ;
+        BNE ScriptStart         ;
+        LDA #$00                ;
+        STA ResetMark           ;
+        LDA ResetPtr            ;
+        STA ScriptPtr           ;
+        LDA ResetPtr+1          ;
+        STA ScriptPtr+1         ;
         BNE +                   ;
+ScriptStart:
         LDA #<SCRIPT_AT         ;
         STA ScriptPtr           ;
         LDA #>SCRIPT_AT         ;
         STA ScriptPtr+1         ;
+ScriptStartNext:
 *       LDY #$00                ;
         LDA RouteLeft           ;
         BNE +                   ;
@@ -48,3 +63,17 @@ ReadInput:
 ScriptDone:
         PLA                     ;
         JMP Parked              ;
+
+;The keypad's Reset (main.asm, before it starts the cartridge again): the
+;script goes on from the entry after the Reset's.
+ResetHook:
+        LDA ScriptPtr           ;
+        CLC                     ;
+        ADC #$03                ;
+        STA ResetPtr            ;
+        LDA ScriptPtr+1         ;
+        ADC #$00                ;
+        STA ResetPtr+1          ;
+        LDA #RESET_MAGIC        ;
+        STA ResetMark           ;
+        RTS                     ;

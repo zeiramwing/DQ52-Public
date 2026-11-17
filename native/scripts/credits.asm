@@ -2,7 +2,8 @@
 ;end music's first part, then the first screen: the people and the hero
 ;gone, the view blank but the credits' rows; on through the screens to the
 ;last, each faded in and out (the last only in), which stays (CrPtr at
-;its end, $FE: the 1055 bytes build.py makes of the ROM's credits).
+;its end, $FE: the 1435 bytes build.py makes of the ROM's credits, with
+;the last two screens' pictures: the 19th, the closing banner, stays).
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
 ;START: 1,10,9
@@ -12,7 +13,7 @@
 ;EXPECT-BYTE: CrOn 1
 ;EXPECT-BYTE: CrPhase 0
 ;EXPECT-BYTE: FadeSub 0
-;EXPECT-BYTE: CrPtr 30
+;EXPECT-BYTE: CrPtr 154
 ;EXPECT-BYTE: PeopleOn 0
 ;EXPECT-BYTE: Mode 4
 

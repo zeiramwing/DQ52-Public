@@ -57,6 +57,10 @@
 .alias MonFade          $07C8   ;The monster's colors less this luminance (16 on: black),
 .alias MonFadeTo        $07C9   ;and where the VBI takes it, a step a frame;
 .alias MonShow          $07CA   ;3: its COLPF1-3 as shown (BattleDLI2's).
+.alias SCENE_LEFT       $FB     ;Its first column (-5),
+.alias SCENE_WIDE       42      ;and how many.
+.alias BufPtr           $D0     ;2: FreezeView's: where a row goes in FreezeBuf,
+.alias RowPtr           $D2     ;2: and the row it comes from.
 .alias WipeLeft         $07CD   ;Rows left of the monster's coming or going,
 .alias WipeShow         $07CE   ;and which: 0 coming (the grid with it), 1 going.
 .alias SrcPtr           $DB     ;2: glyph copying (GfxPtr: no people on the overworld).
@@ -153,22 +157,23 @@ CheckEncounter:
         STA Tmp3                ;
         LDX #$07                ;Sand and hills: 1 in 8.
         CMP #$01                ;
-        BEQ ++                  ;
+        BEQ CheckEncounterNext  ;
         CMP #$02                ;
-        BEQ ++                  ;
+        BEQ CheckEncounterNext  ;
         LDX #$0F                ;Forest, brick, swamp: 1 in 16.
         CMP #$0B                ;
-        BEQ ++                  ;
+        BEQ CheckEncounterNext  ;
         CMP #$04                ;
-        BEQ ++                  ;
+        BEQ CheckEncounterNext  ;
         CMP #$06                ;
-        BEQ ++                  ;
+        BEQ CheckEncounterNext  ;
         LDA HeroX               ;Elsewhere: 1 in 32 where X and Y are both
         EOR HeroY               ;even or both odd, else 1 in 16.
         LSR                     ;
-        BCS ++                  ;
+        BCS CheckEncounterNext  ;
         LDX #$1F                ;
 *       NOP                     ;
+CheckEncounterNext:
 *       STX Tmp                 ;
         JSR NextRandom          ;
         LDA Random+1            ;
@@ -201,7 +206,7 @@ CheckEncounter:
 *       LDA Tmp                 ;
         AND #$0F                ;
         STA Tmp                 ;
-        BNE ++                  ;
+        BNE CheckEncounterNext2 ;
         JSR NextRandom          ;Zone 0: maybe not.
         LDX #$01                ;
         LDA Tmp3                ;
@@ -212,6 +217,7 @@ CheckEncounter:
         AND Random+1            ;
         BEQ +                   ;
         RTS                     ;
+CheckEncounterNext2:
 *       LDA Tmp                 ;One of the zone's 5.
         ASL                     ;
         ASL                     ;
@@ -287,8 +293,9 @@ NameStats:
         BCC +                   ;
         LDX #MaxMP-MaxHP        ;
         LDA MaxMP               ;
-        BEQ ++                  ;
+        BEQ NameStatsNext       ;
 *       JSR NineTenths          ;
+NameStatsNext:
 *       LDX #Agility-MaxHP      ;
         LSR Tmp2                ;
         BCC NineTenths          ;
@@ -331,6 +338,7 @@ Mul8:
         LDA #$00                ;
         STA ProdHi              ;
         LDX #$08                ;
+Mul8Loop:
 *       LSR Tmp                 ;
         BCC +                   ;
         CLC                     ;
@@ -338,7 +346,7 @@ Mul8:
 *       ROR                     ;
         ROR ProdLo              ;
         DEX                     ;
-        BNE --                  ;
+        BNE Mul8Loop            ;
         STA ProdHi              ;
         RTS                     ;
 
@@ -354,10 +362,17 @@ RandTimes:
 ;A fight with enemy A: its stats, name and picture, the battle scene and the
 ;dialog window, the enemy's arrival message.
 StartBattle:
+        PHA                     ;(A: the enemy, kept.)
+        LDA #BATTLE_SEEDED      ;(Test builds with ;SEED: the fight's luck
+        BEQ BattleLuck          ;the same each time, whatever came before.)
+        LDA #<BATTLE_SEED       ;
+        STA Random              ;
+        LDA #>BATTLE_SEED       ;
+        STA Random+1            ;
+BattleLuck:
+        PLA                     ;
         JSR LoadEnemy           ;
         STA Enemy               ;
-        LDA #$01                ;
-        STA BattleOn            ;
         LDA #$00                ;No one asleep or stopped.
         STA HeroSleep           ;
         STA HeroStop            ;
@@ -399,10 +414,30 @@ StartBattle:
         BNE +                   ;
         LDA #MSC_END_BOSS       ;
 *       JSR PlayMusic           ;
+        LDX #$07                ;The arrow shown while the bands' sets copy
+BattleArrow:                    ;it (their blink from ArrowL then).
+        LDA ArrowA,X            ;
+        STA CharsetA+ARROW_CODE*8,X ;
+        DEX                     ;
+        BPL BattleArrow         ;
+        LDA #$00                ;
+        STA CursorClock         ;
         JSR LoadMonster         ;
-        JSR MonsterComes        ;
-        JSR ComposeScene        ;
-        JSR DLIBits             ;
+        LDX #$07                ;
+BattleArrowL:                   ;
+        LDA LowerSet+ARROW_CODE*8,X ;
+        STA ArrowL,X            ;
+        DEX                     ;
+        BPL BattleArrowL        ;
+        JSR FreezeView          ;The map's screen held (Frozen) while the
+        JSR MonsterComes        ;scene is drawn into the ring under it, then
+        JSR ComposeScene        ;the VBI shows it, with the battle's
+        LDA #$01                ;interrupts, all in one frame (StartPending):
+        STA StartPending        ;no race with the beam, and no rows shown
+        LDA FrameCount          ;half drawn or in the wrong set.
+StartWait:
+        CMP FrameCount          ;
+        BEQ StartWait           ;
         LDA #$00                ;
         STA StatusOn            ;
         JSR ShowStatus          ;
@@ -415,8 +450,9 @@ StartBattle:
         LDA #$19                ;
         JSR SetSay              ;
         INC BattleList+1        ;
-        BNE ++                  ;
+        BNE StartWaitNext       ;
 *       JSR SetSay              ;
+StartWaitNext:
 *       JSR OpenDialog          ;
         LDA #$03                ;
         STA Mode                ;
@@ -624,6 +660,7 @@ SrcAdd:
 ;Copy X glyphs (X > 0) from SrcPtr to DstPtr.
 CopyGlyphs:
         LDY #$00                ;
+CopyGlyphsLoop:
 *       LDA (SrcPtr),Y          ;
         STA (DstPtr),Y          ;
         INY                     ;
@@ -632,9 +669,9 @@ CopyGlyphs:
         INC DstPtr+1            ;
 *       TYA                     ;
         AND #$07                ;
-        BNE --                  ;
+        BNE CopyGlyphsLoop      ;
         DEX                     ;
-        BNE --                  ;
+        BNE CopyGlyphsLoop      ;
         RTS                     ;
 
 ;A = A * 14 (A below 18).
@@ -651,7 +688,8 @@ Times14:
         RTS                     ;
 
 ;Draw the scene's rows: the window's cells from the grids, the map's
-;beside it (columns -2 to 33, as many as can show) given codes in the band.
+;beside it (columns -5 to 36, as many as can show, the shake's included)
+;given codes in the band.
 ComposeScene:
         LDA #$00                ;
         STA InLower             ;
@@ -690,7 +728,7 @@ ComposeRow:
         CLC                     ;
         ADC #$01                ;
         JSR NewBand             ;
-*       LDA #$FE                ;
+*       LDA #SCENE_LEFT         ;
         STA WinCol              ;
 ComposeCol:
         LDA WinCol              ;
@@ -712,7 +750,7 @@ ComposePut:
         SEC                     ;
         SBC #24                 ;
         CMP #$04                ;
-        BCS +                   ;
+        BCS ComposeKeepNext     ;
         TAX                     ;
         LDA WinRow              ;
         CMP #SCENE_ROW          ;
@@ -726,9 +764,10 @@ ComposePut:
 ComposeKeep:
         LDA PcChar              ;
         STA CmdBuf,X            ;
+ComposeKeepNext:
 *       INC WinCol              ;
         LDA WinCol              ;
-        CMP #34                 ;
+        CMP #<[SCENE_LEFT+SCENE_WIDE] ;
         BNE ComposeCol          ;
         INC WinRow              ;
         LDA WinRow              ;
@@ -760,7 +799,7 @@ SceneCell:
         STA Lead                ;
         LDA WinRow              ;
         CMP MonTop              ;
-        BCS +                   ;
+        BCS SceneUpperNext      ;
         LDX MapId               ;(No scene in a cave: black.)
         BEQ SceneUpper          ;
         LDA #$00                ;
@@ -774,6 +813,7 @@ SceneUpper:
         TAX                     ;
         LDA SceneGrid,X         ;
         RTS                     ;
+SceneUpperNext:
 *       SEC                     ;
         SBC MonTop              ;
         JSR Times14             ;
@@ -1020,6 +1060,27 @@ SayHi:
 ;message is out, the next step.
 BattleFrame:
         JSR MonsterWipe         ;
+        LDA FxTime              ;An effect running: the battle waits for it
+        BEQ BattleGo            ;(the struck monster blinking meanwhile:
+        LDA FxKind              ;hidden 2 frames in 5).
+        CMP #FX_BLINK           ;
+        BNE BattleWait          ;
+        LDA FxTime              ;
+*       CMP #$05                ;
+        BCC +                   ;
+        SBC #$05                ;
+        BCS -                   ;
+*       CMP #$02                ;
+        LDA #$00                ;
+        ROL                     ;(C clear, under 2: hidden.)
+        EOR #$01                ;
+        JMP BlinkTo             ;
+BattleGo:
+        LDA BlinkOff            ;(Shown again once it is over.)
+        BEQ +                   ;
+        LDA #$00                ;
+        JSR BlinkTo             ;
+*
         LDA ListOn              ;The spells' list window.
         BEQ +                   ;
         JMP ListFrame           ;
@@ -1037,6 +1098,42 @@ BattleFrame:
         LDA StepHi,X            ;
         STA Ptr+1               ;
         JMP (Ptr)               ;
+
+;The monster hidden (A non-zero) or shown: its cells that differ without
+;it redrawn, from the grid with or without it.
+BlinkTo:
+        CMP BlinkOff            ;
+        BEQ BattleWait          ;
+        STA BlinkOff            ;
+        LDA MonGone             ;
+        PHA                     ;
+        LDA BlinkOff            ;
+        STA MonGone             ;
+        LDA MonTop              ;
+        STA WinRow              ;
+BlinkRow:
+        LDA #SCENE_COL          ;
+        STA WinCol              ;
+BlinkCell:
+        JSR SceneCell           ;(X: its place in the grids.)
+        TAY                     ;
+        LDA WithGrid,X          ;
+        CMP WithoutGrid,X       ;
+        BEQ +                   ;
+        TYA                     ;
+        JSR PutChar             ;
+*       INC WinCol              ;
+        LDA WinCol              ;
+        CMP #SCENE_COL+14       ;
+        BNE BlinkCell           ;
+        INC WinRow              ;
+        LDA WinRow              ;
+        CMP #SCENE_END          ;
+        BNE BlinkRow            ;
+        PLA                     ;
+        STA MonGone             ;
+BattleWait:
+        RTS                     ;
 
 StepLo: .byte <StepIntro, <StepPrompt, <StepNone, <StepAttack, <StepDamage, <StepEnemy, <StepEnemyHit
         .byte <StepRound, <StepWin, <StepExp, <StepGold, <StepLevel, <StepStr, <StepAgi, <StepHP
@@ -1119,10 +1216,10 @@ DoFight:
         JSR NextRandom          ;
         LDA Enemy               ;(None against the Dragonlord.)
         CMP #EN_DRAGONLORD      ;
-        BCS +                   ;
+        BCS DoFightNext         ;
         LDA Random+1            ;
         AND #$1F                ;
-        BNE +                   ;
+        BNE DoFightNext         ;
         INC Excellent           ;
         JSR GetAttack           ;
         LSR                     ;
@@ -1132,12 +1229,14 @@ DoFight:
         SEC                     ;
         SBC Tmp                 ;
         STA Damage              ;
-        JMP ++                  ;
+        JMP DoFightNext2        ;
+DoFightNext:
 *       JSR GetAttack           ;
         LDX Enemy               ;
         LDY EnemyDef               ;
         JSR HitDamage           ;
         STA Damage              ;
+DoFightNext2:
 *       LDA #SFX_ATTACK         ;
         JSR PlaySFX             ;
         LDA #$E5                ;Loto attacks!
@@ -1213,6 +1312,9 @@ StepAttack:
 StepDamage:
         LDA #SFX_ENEMY_HIT      ;
         JSR PlaySFX             ;
+        LDA #FX_BLINK           ;
+        LDX #25                 ;
+        JSR StartFx             ;
         LDA Damage              ;The damage to the enemy: said, with its
         STA Amount              ;amount.
         LDA #$00                ;
@@ -1274,6 +1376,9 @@ EnHit:
 *       STA Amount              ;(The HP lost, for the hurt message.)
         LDA #SFX_HERO_HIT       ;
         JSR PlaySFX             ;
+        LDA #FX_SHAKE           ;
+        LDX #24                 ;
+        JSR StartFx             ;
         LDA #$00                ;
         STA Amount+1            ;
         LDA HitPoints           ;
@@ -1484,18 +1589,63 @@ RedrawStatus:
 
 ;The end of a battle: the map back, the hero back.
 EndBattle:
-        LDA #$00                ;
-        STA BattleOn            ;
-        STA DialogOn            ;
-        STA StatusOn            ;
-        STA Mode                ;
+        JSR FreezeView          ;The battle's screen held while the map is
+        LDA #$00                ;drawn under it (shown through the map's
+        STA StatusOn            ;set as it was redrawn, it was garbage); then
+        STA Mode                ;the VBI ends it all at once (EndPending).
         STA StandTime           ;
-        LDA #HERO_HPOS          ;
-        JSR HeroAt              ;
         JSR TownBattleEnd       ;
-        JSR DLIBits             ;
         JSR PlayMapMusic        ;
-        JMP DrawView            ;
+        JSR DrawView            ;
+        LDA #$01                ;
+        STA EndPending          ;
+        LDA FrameCount          ;(Done by the next frame.)
+*       CMP FrameCount          ;
+        BEQ -                   ;
+        RTS                     ;
+
+;Each display list row's 40 bytes into FreezeBuf, and the rows shown from
+;there from the next frame (the VBI's SetAddresses), before the ring is
+;drawn over.
+FreezeView:
+        LDA #<FreezeBuf         ;
+        STA BufPtr              ;
+        LDA #>FreezeBuf         ;
+        STA BufPtr+1            ;
+        LDX #$03                ;
+FreezeRow:
+        CPX #FREEZE_SPLIT       ;(Rows 5 on: the second part.)
+        BNE +                   ;
+        LDA #<FreezeBuf2        ;
+        STA BufPtr              ;
+        LDA #>FreezeBuf2        ;
+        STA BufPtr+1            ;
+*       LDA DList,X             ;
+        STA RowPtr              ;
+        LDA DList+1,X           ;
+        STA RowPtr+1            ;
+        LDY #47                 ;
+*       LDA (RowPtr),Y          ;
+        STA (BufPtr),Y          ;
+        DEY                     ;
+        BPL -                   ;
+        LDA BufPtr              ;
+        CLC                     ;
+        ADC #48                 ;
+        STA BufPtr              ;
+        BCC +                   ;
+        INC BufPtr+1            ;
+*       INX                     ;
+        INX                     ;
+        INX                     ;
+        CPX #3+3*DL_ROWS        ;
+        BNE FreezeRow           ;
+        LDA #$01                ;
+        STA Frozen              ;
+        LDA FrameCount          ;
+*       CMP FrameCount          ;
+        BEQ -                   ;
+        RTS                     ;
 
 ;Dead: back to the King with half the gold, HP and MP full (as the game's
 ;InitDeathSequence), and what he says to a hero he brings back.
@@ -1533,6 +1683,7 @@ DeathTalk:
 
 ;The battle's command window: FIGHT, SPELL, RUN, ITEM, the cursor on FIGHT.
 OpenBattleCmd:
+        JSR Beep                ;(The command window up: its sound.)
         LDX #TPL_BATTLE         ;
         JSR DrawTemplate        ;
         LDA #$00                ;
@@ -1549,7 +1700,8 @@ BattleCmdFrame:
         AND #BTN_A              ;
         BNE +                   ;
         JMP CmdMove             ;
-*       JSR CloseBattleCmd      ;
+*       JSR Beep                ;(A choice: the menu button's sound.)
+        JSR CloseBattleCmd      ;
         LDA Cursor              ;
         BNE +                   ;
         JMP DoFight             ;
@@ -1575,8 +1727,10 @@ CloseBattleCmd:
         LDA #SCENE_ROW          ;
         STA WinRow              ;
         LDY #$00                ;CmdBuf's index.
+CloseBattleCmdLoop2:
 *       LDA #CMD_COL            ;
         STA WinCol              ;
+CloseBattleCmdLoop:
 *       LDA WinCol              ;
         CMP #SCENE_COL+14       ;
         BCS +                   ;
@@ -1589,9 +1743,9 @@ CloseCell:
         INC WinCol              ;
         LDA WinCol              ;
         CMP #CMD_COL+CMD_WIDTH  ;
-        BNE --                  ;
+        BNE CloseBattleCmdLoop  ;
         INC WinRow              ;
         LDA WinRow              ;
         CMP #CMD_ROW+6          ;
-        BNE ---                 ;
+        BNE CloseBattleCmdLoop2 ;
         RTS                     ;

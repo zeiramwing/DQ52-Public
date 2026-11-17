@@ -277,6 +277,13 @@ GroundHurt:
         STX Tmp                 ;
         TYA                     ;
         JSR PlaySFX             ;
+        LDX #2                  ;The screen red: once (a swamp), or 3 times
+        LDA Tmp                 ;(the barrier), a frame each.
+        CMP #2                  ;
+        BEQ +                   ;
+        LDX #6                  ;
+*       LDA #FX_GROUND          ;
+        JSR StartFx             ;
         LDA HitPoints           ;
         SEC                     ;
         SBC Tmp                 ;
@@ -320,67 +327,6 @@ StepFieldDead:
 .alias MSC_END_BOSS     $0F     ;
 .alias LORD_PAUSE       80      ;Frames between them (the game's wait).
 
-;His offer refused: the fight. Taken: all the hero had is gone (ZeroStats)
-;and the game ends there, the dialog's last message up.
-LordStep:
-        LDA #$00                ;
-        STA ShopState           ;
-        LDA ShopCtl             ;
-        CMP #RAINBOW_MAN        ;
-        BEQ RainbowMan          ;
-        CMP #RAIN_MAN           ;
-        BEQ RainMan             ;
-        CMP #GWAELIN            ;
-        BNE +                   ;
-        JMP GwaelinAsk          ;
-*       CMP #KING_GW            ;
-        BNE +                   ;
-        JMP KingGwStep          ;
-*       CMP #PW_SHOW            ;
-        BNE +                   ;
-        JMP PwShowP             ;
-*       CMP #CURSE_MAN          ;
-        BNE +                   ;
-        JMP CurseMan            ;
-*       CMP #RING_MAN           ;
-        BNE +                   ;
-        JMP RingMan             ;
-*       CMP #ENDING             ;(Steps in MSG_BANK: run next.)
-        BNE +                   ;
-        LDA #EG_END             ;
-        STA ShopState           ;
-        RTS                     ;
-*       CMP #DS_FULL            ;(Steps in MSG_BANK: run next.)
-        BNE +                   ;
-        LDA #DS_ASK             ;
-        STA ShopState           ;
-        RTS                     ;
-*       CMP #END_GW             ;
-        BNE +                   ;
-        LDA #EG_ASK             ;
-        STA ShopState           ;
-        RTS                     ;
-*
-        CMP #LORD_JOIN          ;
-        BEQ LordJoin            ;
-        JSR CloseDialog         ;
-        LDA #EN_DRAGONLORD      ;
-        JMP StartBattle         ;
-LordJoin:
-        LDA #$00                ;Gold and experience,
-        LDX #$03                ;
-*       STA Gold,X              ;
-        DEX                     ;
-        BPL -                   ;
-        LDX #ModFlags-Equipped  ;and the equipment, keys, herbs, items and
-*       STA Equipped,X          ;flags.
-        DEX                     ;
-        BPL -                   ;
-        JSR RedrawStatus        ;
-        LDA #LORD_END           ;
-        STA ShopState           ;
-StepLordEnd:
-        RTS                     ;
 
 ;--------------------------------------[Battles in a castle]-----------------------------------------
 
@@ -392,7 +338,7 @@ StepLordEnd:
 ;is (Dark $80: lit, made dark; nothing in the light).
 TownBattle:
         LDA MapId               ;
-        BEQ +                   ;
+        BEQ TownBattleNext      ;
         LDA PeopleOn            ;
         STA SavedPeople         ;
         LDA #$00                ;
@@ -405,6 +351,7 @@ TownBattle:
         STA LightR              ;
         STA LightW              ;
         JSR DrawView            ;
+TownBattleNext:
 *       RTS                     ;
 
 ;Its end: the people back, a lit map lit again (EndBattle then draws it).
@@ -432,83 +379,10 @@ TownBattleEnd:
 .alias ITM_HARP         $0A     ;
 .alias RAIN_MAN         $F3     ;The staff of rain's guardian (maps.py).
 
-;The old man of the rainbow drop's cave (the game's $6D dialog): with the
-;drop already, nothing for the hero; without Erdrick's token, the hero is
-;sent out of the cave; with it, the stones of sunlight and the staff of
-;rain become the rainbow drop, or he says what is wanted.
-RainbowMan:
-        LDA #ITM_DROP           ;
-        JSR HasItem             ;
-        BCC +                   ;
-        LDA #$A5                ;He has nothing for the hero.
-        JMP ShopEnd             ;
-*       LDA #ITM_TOKEN          ;
-        JSR HasItem             ;
-        BCS +                   ;
-        LDA #$B3                ;The task failed: out of the cave.
-        LDX #RM_EXIT            ;
-        JMP ShopSay             ;
-*       LDA #ITM_STONES         ;
-        JSR HasItem             ;
-        BCC RainbowNot          ;
-        LDA #ITM_STAFF          ;
-        JSR HasItem             ;
-        BCC RainbowNot          ;
-        LDA #ITM_STONES         ;The sun and the rain meet: the drop.
-        JSR RemoveItem          ;
-        LDA #ITM_STAFF          ;
-        JSR RemoveItem          ;
-        LDA #ITM_DROP           ;
-        JSR AddItem             ;
-        LDA #30                 ;The screen grey for half a second.
-        STA GreyTime            ;
-        LDA #$B4                ;
-        JMP ShopEnd             ;
-RainbowNot:
-        LDA #$49                ;What the bridge wants,
-        LDX #RM_MORE            ;
-        JMP ShopSay             ;
-StepRmMore:
-        LDA #$AE                ;and that he has waited.
-        JMP ShopEnd             ;
-
-;The old man of the staff of rain's cave (the game's $6C dialog): with the
-;drop or the staff already, nothing for the hero; with the silver harp, it
-;is taken and he goes, leaving the staff's chest free; else his test.
-RainMan:
-        LDA #ITM_DROP           ;
-        JSR HasItem             ;
-        BCS +                   ;
-        LDA #ITM_STAFF          ;
-        JSR HasItem             ;
-        BCC ++                  ;
-*       LDA #$A5                ;He has nothing for the hero.
-        JMP ShopEnd             ;
-*       LDA #ITM_HARP           ;
-        JSR HasItem             ;
-        BCS +                   ;
-        LDA #$B1                ;His test.
-        JMP ShopEnd             ;
-*       LDA #ITM_HARP           ;The harp taken, and he goes (the only one
-        JSR RemoveItem          ;there: no one left on the map).
-        JSR CondHere            ;(His block what was under him.)
-        LDA #$00                ;
-        STA PeopleOn            ;
-        LDA #<RainTalk          ;What he says.
-        LDY #>RainTalk          ;
-        JMP SayList             ;
-
-RainTalk:       .word $00B2, $00A4, $00C6, $FFFF
-
-;Sent out: by the cave's link, facing down (CheckMapExit).
-StepRmExit:
-        LDA #$00                ;
-        STA ShopState           ;
-        JMP LeaveMap            ;
-
 ;C set if the inventory holds ITM_ code A (CheckForInvItem). X, Y lost.
 HasItem:
         LDX #$03                ;
+HasItemLoop:
 *       LDY Inventory,X         ;
         PHA                     ;
         TYA                     ;
@@ -527,7 +401,7 @@ HasItem:
         CMP Tmp                 ;
         BEQ +                   ;
         DEX                     ;
-        BPL -                   ;
+        BPL HasItemLoop         ;
         CLC                     ;
         RTS                     ;
 *       SEC                     ;
@@ -625,9 +499,10 @@ EndTrigger:
         STA ModFlags            ;
         LDA #<EndGwTalk         ;
         LDY #>EndGwTalk         ;
-        BNE ++                  ;
+        BNE EndTriggerNext      ;
 *       LDA #<EndTalk           ;
         LDY #>EndTalk           ;
+EndTriggerNext:
 *       JSR SayList             ;
         SEC                     ;
         RTS                     ;
@@ -693,6 +568,7 @@ GuardSkip:
 ;overworld). X lost.
 GuardianWon:
         LDX #$00                ;
+GuardianWonLoop:
 *       LDA Guardians+3,X       ;
         CMP Enemy               ;
         BNE +                   ;
@@ -707,7 +583,7 @@ GuardianWon:
         ADC #$05                ;
         TAX                     ;
         CPX #3*5                ;
-        BNE --                  ;
+        BNE GuardianWonLoop     ;
         RTS                     ;
 
 ;--------------------------------------[The princess]------------------------------------------------
@@ -793,36 +669,13 @@ TalkPrincess:
         SEC                     ;
         RTS                     ;
 GwaelinTalk:    .word $00B5, $FFFB, GWAELIN
-GwaelinAsk:
-        LDA #$C5                ;
-        LDX #GW_ASKED           ;
-        JMP ShopAsk             ;
-StepGwAsked:
-        LDA Answer              ;
-        BEQ +                   ;
-        LDA #$B6                ;NO: she asks again.
-        LDX #GW_AGAIN           ;
-        JMP ShopSay             ;
-*       LDA ModFlags            ;YES: she is carried, her block floor.
-        ORA #F_CARRY            ;
-        STA ModFlags            ;
-        LDA #PRINCESS_X         ;
-        STA BX                  ;
-        LDA #PRINCESS_Y         ;
-        STA BY                  ;
-        LDA #BLK_BRICK          ;
-        JSR SetBlock            ;
-        LDA #$00                ;
-        STA ShopState           ;
-        RTS                     ;
-
 ;TALK to the King, carrying her (DoKingDialog): his thanks, her keepsake
 ;given (the bag full: an item of KeepTake's taken for it),
 ;her farewell; she is home.
 KingGwaelin:
         LDA ModFlags            ;
         AND #F_CARRY            ;
-        BEQ +                   ;
+        BEQ KingGwaelinNext     ;
         LDA MapId               ;The King: in the throne room, his figure.
         CMP #THRONE_MAP         ;
         BNE +                   ;
@@ -834,50 +687,9 @@ KingGwaelin:
         STA MsgList             ;
         LDA #>KingGwTalk        ;
         STA MsgList+1           ;
+KingGwaelinNext:
 *       RTS                     ;
 KingGwTalk:     .word $00B9, $FFFB, KING_GW
-KingGwStep:
-        LDA ModFlags            ;
-        AND #$FF-F_CARRY        ;
-        ORA #F_RETURNED         ;
-        STA ModFlags            ;
-        LDA #ITM_LOVE           ;
-        JSR AddItem             ;
-        BCC StepGwKeep          ;
-        LDA #$00                ;Full: the first of KeepTake held is taken
-        STA ShopTmpI            ;for it (none: no keepsake).
-*       LDX ShopTmpI            ;
-        LDA KeepTake,X          ;
-        JSR HasItem             ;
-        BCS +                   ;
-        INC ShopTmpI            ;
-        LDA ShopTmpI            ;
-        CMP #$07                ;
-        BNE -                   ;
-        BEQ StepGwKeep          ;
-*       LDX ShopTmpI            ;
-        LDA KeepTake,X          ;
-        PHA                     ;
-        JSR RemoveItem          ;
-        PLA                     ;
-        CLC                     ;
-        ADC #ITM_BASE           ;
-        STA ItemName            ;
-        LDA #ITM_LOVE           ;
-        JSR AddItem             ;
-        LDA #$BA                ;And something of the hero's for the King.
-        LDX #GW_KEEP            ;
-        JMP ShopSay             ;
-StepGwKeep:
-        LDA #$BB                ;
-        LDX #GW_BYE             ;
-        JMP ShopSay             ;
-;What the King may take for it (InvListTbl): torch, dragon's scale,
-;fighter's ring, fairy water, wings, cursed belt, staff of rain.
-KeepTake:       .byte 1, 4, 6, 2, 3, 9, 13
-StepGwBye:
-        LDA #$BC                ;
-        JMP ShopEnd             ;
 
 ;--------------------------------------[Healing armor]-----------------------------------------------
 
@@ -891,16 +703,17 @@ ArmorHeal:
         CMP #ERDRICK_ARMOR      ;
         BEQ +                   ;
         CMP #MAGIC_ARMOR        ;
-        BNE ++                  ;
+        BNE ArmorHealNext       ;
         INC ArmorSteps          ;
         LDA ArmorSteps          ;
         AND #$03                ;
-        BNE ++                  ;
+        BNE ArmorHealNext       ;
 *       LDA HitPoints           ;
         CMP MaxHP               ;
         BCS +                   ;
         INC HitPoints           ;
         JMP RedrawStatus        ;
+ArmorHealNext:
 *       RTS                     ;
 
 ;--------------------------------------[Her keepsake]------------------------------------------------
@@ -986,6 +799,7 @@ LoveDistance:
 .alias CURSE_MAN        $F8     ;The curse lifter's dialog step, the ring
 .alias RING_MAN         $F9     ;man's (maps.py).
 .alias DS_FULL          $FA     ;A search's find, the bag full (TokenFull).
+.alias MP_MAN           $FC     ;The wizard who gives MP back (maps.py).
 .alias CURSED_Y         27      ;Tantegel's hall row that turns the cursed out.
 
 ;The fighter's ring put on, or put right (ChkRing).
@@ -1026,7 +840,7 @@ WearCursed:
 CursedGate:
         LDA Flags2              ;
         AND #F2_CURSED          ;
-        BEQ +                   ;
+        BEQ CursedGateNext      ;
         LDA MapId               ;
         CMP #TANTEGEL_GF        ;
         BNE +                   ;
@@ -1038,6 +852,7 @@ CursedGate:
         JSR ShopOpen            ;
         SEC                     ;
         RTS                     ;
+CursedGateNext:
 *       CLC                     ;
         RTS                     ;
 
@@ -1051,43 +866,3 @@ CursedDeath:
         LDY #>CursedTalk        ;
         JMP SayList             ;
 CursedTalk:     .word $0114, $FFFF
-
-;The curse lifter (ChkCursedDialog): not cursed, come again; else the
-;cursed items gone and the curse with them.
-CurseMan:
-        LDA Flags2              ;
-        AND #F2_CURSED          ;
-        BNE +                   ;
-        LDA #$A6                ;
-        JMP ShopEnd             ;
-*       BPL +                   ;(Bit 7: the necklace.)
-        LDA #$0B                ;
-        JSR RemoveItem          ;
-*       BIT Flags2              ;
-        BVC +                   ;
-        LDA #$09                ;
-        JSR RemoveItem          ;
-*       LDA Flags2              ;
-        AND #$FF-F2_CURSED      ;
-        STA Flags2              ;
-        LDA #$A7                ;
-        LDX #CF_DONE            ;
-        JMP ShopSay             ;
-StepCfDone:
-        LDA #$A8                ;
-        JMP ShopEnd             ;
-
-;The ring man (ChkRingDialog): wearing it (it still had), his other words.
-RingMan:
-        LDA #$06                ;
-        JSR HasItem             ;
-        BCS +                   ;
-        LDA Flags2              ;
-        AND #$FF-F2_RING        ;
-        STA Flags2              ;
-*       LDA Flags2              ;
-        LSR                     ;
-        LDA #$AC                ;
-        BCC +                   ;
-        LDA #$AB                ;
-*       JMP ShopEnd             ;

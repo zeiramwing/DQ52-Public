@@ -1,10 +1,10 @@
 # How the native engine fits together
 
 A guide for anyone, person or AI, opening this code cold. `README.md`
-says what the port does feature by feature; this says where things live
-and how they connect. Read this first, then the header comment of the
-file you need: every `native/*.asm` and `tools/native/*.py` file opens
-with one.
+says what the port does and why; this says where things live and how
+they connect; `HISTORY.md` is the log of how they got that way. Read
+this first, then the header comment of the file you need: every
+`native/*.asm` and `tools/native/*.py` file opens with one.
 
 ## The idea in one paragraph
 
@@ -50,7 +50,7 @@ VBI puts it back after reading sound data).
 | 4, 5 | monster pictures (5 also holds extra map images) |
 | 6 | music and effects, and the sound's divider tables |
 | 7 | RAM tables copied at boot (from $8500); the townspeople's other step (`GFX_ANIM` $8B00), set B (`GFX_SETB` $9800), the hero's 16 frames (`GFX_HERO` $9C00) |
-| 8 | `MSG_BANK`: message tables, game tables (enemies, maps, shops, levels...), test scripts; **code** at $A000 (`poweron.asm`); the credits at $B400 |
+| 8 | `MSG_BANK`: message tables, game tables (enemies, maps, shops, levels...), test scripts; **code** at $A000 (`poweron.asm`); the credits at $B400 (19 screens; the last two pictures' characters inline) |
 | 10 | the townspeople tables; the title screen at $9000 |
 | 13 | monster pictures on black (caves) |
 | 15 | the cartridge header |
@@ -58,16 +58,22 @@ VBI puts it back after reading sound data).
 Free room is roughly 9KB in bank 7 (past `GFX_HERO`'s 1KB at $9C00),
 9.3KB in bank 10 and 5KB each in banks 5 and 6; the map images' banks
 hold 7 of $500 bytes each, so each has about 7KB unused. Bank 1 (text)
-is full. The program half has about 1,270 bytes free; the build prints
-`program to $XXXX, N bytes free`.
+is full. The program half's free room is small (the build prints `program to
+$XXXX, N bytes free`); code that runs rarely goes to bank 8 (below).
 
 ### Code that runs from a bank (`poweron.asm`)
 
 What Ophis assembles past $8000 (after `main.asm`'s
 `.advance $8000`) is `poweron.asm`, assembled for $A000. build.py
 splits it off and puts it in bank 8. It holds code that rarely runs:
-the title, name and password windows, the password's encoding and
-decoding, and the end credits. Rules for code there:
+the boot's setting up (`BootInit`, which `Start` calls with bank 8 in;
+the new hero's table, `NewGame`, with it), the title, name and password
+windows, the password's encoding and decoding, the end credits, and the
+special characters' story steps (`LordStep`'s dispatch, which StepStart
+enters with bank 8 in, and the Dragonlord's offer, the rainbow drop's and
+the staff of rain's keepers, the MP wizard, the princess's question, the
+King's keepsake, the curse lifter, the ring man).
+Rules for code there:
 
 - Enter it only with bank 8 selected. A step machine step there needs
   nothing: `RunShopStep` selects bank 8 for any step address of $8000
@@ -82,18 +88,18 @@ decoding, and the end credits. Rules for code there:
 
 | Range | What |
 |---|---|
-| $00-$FF | zero page: pointers (`Ptr`, `MapPtr`, `DstPtr`...), the frame counter, `Mode` |
+| $00-$FF | zero page: pointers (`Ptr`, `MapPtr`, `DstPtr`...), the frame counter, `Mode`; $D0-$D3 the battle's held screen (`BufPtr`, `RowPtr`: FreezeView); $D8-$D9 the light's ring (`CharAdd`, `RingW`) |
 | $0200-$02FF | the hero (`HeroName` $0240 on: level, HP, gold, stats, items), shop and list state |
 | $0300 | the display list |
-| $0400-$07FF | townspeople arrays, enemy record, map record (`MapRec` $0770), password and power-on state; $07Bx-$07Cx: flash, fades, credits, title |
+| $0400-$07FF | townspeople arrays, enemy record, map record (`MapRec` $0770), password and power-on state; $07Bx-$07Cx: flash, fades, credits, title; $07D2-$07D8 the hit and spell effects (`FxKind`, `FxTime`, `TintHue`, `ShakeH`/`ShakeV`, `BlinkOff`, `FxTint`), $07D9-$07DA the battle's end (`Frozen`, `EndPending`), $07DB-$07DD idle time and attract mode (`IdleLo`, `IdleHi`, `AttractMask`), $07DE-$07DF the text's speed (`TextSpeed`, `TextWait`), $07E0 `VbiOn`, $07E1 `QuietLoad`, $07E2-$07F2 the cursor's blink (`CursorClock`, `ArrowA`, `ArrowL`), $07F3 `TitleBand`, $07F4 `DlgInk`, $07F5-$07F9 `ShownColors` (the colours the VBI set, for the interrupts), $07FA `StartPending` |
 | $0800-$0BFF | tables copied from bank 7 at boot (text tile codes, window templates) |
-| $0C00-$0FFF | player/missile graphics (players 0-2 the hero; player 3 unused) |
-| $1000-$1FFF | the screen: a ring of 32 rows × 128 bytes, scrolled |
+| $0C00-$0FFF | player/missile graphics (players 0-2 the hero; player 3's memory, $0F00, holds rows 0-4 of a battle's last screen, `FreezeBuf`, HPOSP3 kept 0) |
+| $1000-$1FFF | the screen: a ring of 32 rows × 128 bytes (64 columns, each twice), scrolled; the normal playfield shows 40 columns, -4 to 35 of the windows' 0-31 |
 | $2000-$28FF | set A (the map's image), set B (every map's, `LoadSetB`), block tables, colors (`MapColors` $28C8) |
 | $2900-$2BFF | the stepping characters (`AnimCodes` $2950, `AnimGlyphs` $2B00); a battle's `RemapTbl` $2A00 |
 | $2C00-$2FFF | the current town's map (doors and chests change it) |
 | $3000-$3AFF | a battle's: the monster's sets (`LowerSet` $3000, `Lower2Set` $3400), its grids (`WithoutGrid` $3800, `WithGrid` $3900), `SceneGrid` $3A00 |
-| $3B00-$3FFF | the password's bytes and characters (`PwBuf` $3B00, `PwChars` $3B20); the rest free |
+| $3B00-$3FFF | the password's bytes and characters (`PwBuf` $3B00, `PwChars` $3B20); the title's band table (`TitleBands` $3C00); a battle's held screen, rows 5-28 (`FreezeBuf2` $3B00-$3F7F, 48 bytes a row, at its start and end); the rest free |
 
 The whole of `$0400-$28FF` is cleared at boot.
 
@@ -115,7 +121,7 @@ then runs one frame of the current `Mode`:
 | 6 | power-on (title, name, password) | `PowerOn` → `PasswordFrame` |
 
 Controls: the lower fire button is the NES's A, the upper B. On the
-keypad, Start goes past the title, Pause holds the game while walking,
+keypad, Reset starts the cartridge again, Start goes past the title, Pause holds (and dims) the game while walking,
 and keys 1-8 run a command at once through the command window's own
 dispatch (`DoCommand`, with `KeyCommand` mapping keys to commands).
 
@@ -156,6 +162,68 @@ To add an interaction: write its steps, add their numbers and the
 (`$FFFB` and a new control byte, plus a `LordStep` case) or call
 `ShopOpen` (A = first message, X = the step after it).
 
+## Characters read from the cartridge (an option, not built)
+
+The NES's video chip reads its characters from a ROM of its own, on its
+own bus. The 5200's ANTIC has no bus of its own: it takes cycles from the
+CPU and reads wherever CHBASE points, cartridge ROM included, so no
+special cartridge or flash cart feature is needed for characters in ROM.
+The port copies them to RAM anyway, for two reasons:
+
+- Only $8000-$BFFF is banked, and the game switches banks all the time
+  (map data, text, and the sound bank in the VBI). ANTIC reads the set
+  every line, so a set in one bank would show garbage whenever another is
+  in.
+- Much of set A changes while the game runs: the townspeople's other step
+  (`AnimStep`), the sea's sway, the cursor's blink (`CursorBlink`), the
+  name's letters (`NameGlyphs`), and each battle's bands, composed at its
+  start.
+
+What would work, if RAM were ever short:
+
+- **Set B from ROM.** The dialog's font is the same everywhere and never
+  changes. One copy at the same address in each of the 16 banks (16KB of
+  cartridge, which has room) lets CHBASE point at it whatever bank is in,
+  and frees the 1KB `LoadSetB` copies to RAM. Low risk: set B's users are
+  the dialog's display list interrupt and `BattleDLI3`.
+- **The NES's way of animating.** Each map's two steps as two sets in ROM,
+  CHBASE flipped every 16 frames in place of `AnimStep`'s copying: but the
+  sets would need copies in every bank too, and the cursor, the name's
+  letters and the battle bands still need RAM.
+
+Neither is worth it while program space, not RAM, is what runs out first
+(the fix for that is moving code to the data banks, as `poweron.asm`).
+
+## Display interrupts
+
+The VBI chooses each frame's display list interrupt (`VDSLST`) from the
+state, so no interrupt has to test anything before its line ends:
+
+- **Walking, a dialog up**: `DLI` (`people.asm`), on the row above the
+  window: the text set (B) and the dialog's ink. No dialog: `DLINone`.
+- **A battle**: a chain, each interrupt pointing `VDSLST` at the next:
+  `BattleDLI1` (the scene's set), `BattleDLI2` (the monster's set and
+  colours, `MonShow`), `BattleDLI2b` (the biggest monsters' second set),
+  then `Dli3Dialog` or `BattleDLI3` (the dialog's rows, or the map's while
+  the dialog isn't up yet), chosen by the one before. In a cave the chain
+  starts at `BattleDLI2`.
+- **The title**: `TitleDLI`, once per band, from `TitleBands`.
+
+**The rule they share:** before `STA WSYNC`, load only what the first
+line needs (the character set, at most one colour), then write after it,
+the most visible first. The interrupt fires on the last line of the row
+above, and ANTIC's DMA leaves the CPU few cycles on it: more work before
+`WSYNC` misses that line's end, and the band's first line shows in the
+old set (a line across the screen). Colours come from what the VBI set
+(`ShownColors`, `DlgInk`, `MonShow`: tinted, faded and dimmed), so the
+bands follow the screen's fades and flashes.
+
+A battle starts and ends behind a held screen: `FreezeView` copies the
+visible rows to `FreezeBuf` and the display list shows that copy while
+the scene is composed into the ring (start) or the map is redrawn (end).
+The VBI then switches to the ring and the right interrupts in one frame
+(`StartPending`, `EndPending`).
+
 ## Messages and text
 
 Messages are played by number from the ROM's own text: `NextMessage`
@@ -192,6 +260,8 @@ a step. The whole suite takes about an hour; run it before pushing.
 - **Zero-page pointers are shared.** `Ptr` is used by `PutChar`, and
   `TextPtr` by message printing. Use RAM, or reload the pointer before
   each use, if other routines can run in between.
+- **Display interrupts have only a few cycles before `WSYNC`.** See
+  above: a line across a band's top edge means too much work before it.
 - **Program space is tight.** Move rarely-run code into `poweron.asm`
   (with a stub), and tables into a bank (bank 8 has room).
 

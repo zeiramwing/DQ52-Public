@@ -22,6 +22,8 @@
 .alias TL_BOTTOM        $68     ;
 .alias TL_BOTTOM_RIGHT  $69     ;
 .alias TL_ARROW         $42     ;and the cursor.
+.alias ARROW_CODE       109     ;The arrow's code in set A (convert.py: text from 64,
+                                ;10 digits, 26 capitals, 9 frame pieces, then it).
 
 ;Put character A at screen row WinRow, column WinCol: in the ring at row
 ;(TopBlock * 2 + WinRow) mod 32, column (LeftBlock * 2 + WinCol) mod 64,
@@ -74,6 +76,11 @@ CellAt:
 
 ;Put text tile A in set A at (WinRow, WinCol), and step to the next column.
 PutTileA:
+        CMP #TL_ARROW           ;(The cursor drawn: shown at once, its blink
+        BNE PutTileOn           ;from the start.)
+        LDX #$00                ;
+        STX CursorClock         ;
+PutTileOn:
         TAX                     ;Its code in set A (TextA: lower case the
         LDA TextA,X             ;capitals'; blanks and tiles set A lacks 0).
         JSR PutChar             ;
@@ -219,9 +226,10 @@ NumPower:
         CPX #$04                ;The last digit, even 0.
         BEQ +                   ;
         LDA #TL_BLANK           ;
-        BNE ++                  ;
+        BNE NumPowerNext        ;
 *       STA Lead                ;
         LDA Digit               ;Digit tiles are $00-$09.
+NumPowerNext:
 *       STX Tmp2                ;
         JSR PutTileA            ;
         LDX Tmp2                ;
@@ -250,6 +258,7 @@ ShowStatus:
         LDA #STATUS_COL+2       ;blank).
         STA WinCol              ;
         LDX #$00                ;
+ShowStatusLoop:
 *       LDA #NAME_SLOT          ;
         STX Tmp                 ;
         CLC                     ;
@@ -262,7 +271,7 @@ ShowStatus:
         INC WinCol              ;
         INX                     ;
         CPX #$04                ;
-        BNE --                  ;
+        BNE ShowStatusLoop      ;
 
         LDA #STATUS_ROW+2       ;The numbers, each ending in column 6.
         LDX #2                  ;
@@ -372,6 +381,7 @@ CommandFrame:
 *       LDA Pressed             ;
         AND #BTN_A              ;
         BEQ CmdMove             ;
+        JSR Beep                ;(A choice: the menu button's sound.)
         JSR CloseCommand        ;
 ;Command Cursor (0 TALK, 1 SPELL, 2 STATUS, 3 ITEM, 4 STAIRS, 5 DOOR, 6
 ;SEARCH, 7 TAKE): from the window, or a keypad key (main.asm's Walk).
