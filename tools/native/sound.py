@@ -10,17 +10,28 @@ becomes POKEY dividers:
 * SQ1 on channels 1+2 joined, clocked at 1.79MHz: f = 1789790 / 2 / (N + 7),
   16 bits, close to exact.
 * SQ2 (and the sound effects' tones) on channel 3 and the triangle on
-  channel 4, each 8 bits at 64kHz: f = 63921 / 2 / (N + 1). A note too low
-  for 8 bits goes up an octave.
+  channel 4, each 8 bits at 64kHz: f = 63921 / 2 / (N + 1), and again at
+  15kHz (f = 15700 / 2 / (N + 1)). The engine switches the two channels to
+  15kHz on a frame a note of theirs is too low for 64kHz, unless the other's
+  would be out of tune there (NoteFlags: bit 7 the triangle's too low, 6
+  SQ2's in tune at 15kHz, 5 SQ2's too low, 4 the triangle's in tune); a note
+  too low for 8 bits at 64kHz otherwise goes up an octave.
 * The noise channel's 16 periods (NES timer steps) become channel 3's
   divider for POKEY's 17-bit noise at 64kHz.
+* Each note's NES timer, and each timer's 8-bit divider (TimerDiv, all
+  2048), for the sweep (only the wings' effect sweeps).
+* DutyVol: a pulse's volume (0-15) by its duty, as loud as the NES's
+  (POKEY plays every tone at 50%; a narrower pulse is quieter).
 """
+import math
 import sys
 
 NOTES = 73                      # $80-$C8.
 NES_CPU = 1789773
 POKEY_FAST = 1789790
 POKEY_64K = 63921
+POKEY_15K = 15700
+SLOW_OK = 12                    # Cents a note may be off at 15kHz.
 NOISE_PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
 
 
@@ -30,6 +41,11 @@ NOISE_PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 
 # $C0 buzzing (the 4-bit), the hits' crunch and the force field's.
 NOISE_DIST = [0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xC0, 0x80, 0x80, 0xC0,
               0xC0, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]
+
+
+# A pulse's loudness by its duty (12.5%, 25%, 50%, 75%), against 50%: its
+# wave's RMS, sqrt(d * (1 - d)) / 0.5.
+DUTY_LOUD = [0.661, 0.866, 1.0, 0.866]
 
 
 def note_timers(rom):
@@ -45,16 +61,38 @@ def divider_8bit(f):
         f *= 2
 
 
+def slow(f):
+    """F's 8-bit divider at 15kHz, and how many cents off it plays."""
+    n = min(255, max(0, round(POKEY_15K / 2 / f) - 1))
+    return n, abs(1200 * math.log2(POKEY_15K / 2 / (n + 1) / f))
+
+
 def tables(rom):
-    """(SQ1 16-bit dividers, SQ2 8-bit, triangle 8-bit, noise 8-bit)."""
-    sq1, sq2, tri = [], [], []
-    for t in note_timers(rom):
+    """The POKEY tables, in their order in SOUND_BANK: [(label, bytes)]."""
+    sq1, sq2, tri, sq2s, tris, flags = [], [], [], [], [], []
+    timers = note_timers(rom)
+    for t in timers:
         f = NES_CPU / 16 / (t + 1)
         sq1.append(min(0xFFFF, max(0, round(POKEY_FAST / 2 / f) - 7)))
         sq2.append(divider_8bit(f))
         tri.append(divider_8bit(f / 2))
+        n2, e2 = slow(f)
+        nt, _ = slow(f / 2)
+        sq2s.append(n2)
+        tris.append(nt)
+        _, et = slow(f / 2)
+        tri_low = round(POKEY_64K / 2 / (f / 2)) - 1 > 255
+        sq2_low = round(POKEY_64K / 2 / f) - 1 > 255
+        flags.append((0x80 if tri_low else 0) | (0x40 if e2 <= SLOW_OK else 0)
+                     | (0x20 if sq2_low else 0) | (0x10 if et <= SLOW_OK else 0))
     noise = [min(255, max(0, round(POKEY_64K * p / NES_CPU) - 1)) for p in NOISE_PERIODS]
-    return sq1, sq2, tri, noise
+    duty = [0 if v == 0 else max(1, round(v * DUTY_LOUD[d])) for d in range(4) for v in range(16)]
+    return [("Sq1DivLo", [v & 0xFF for v in sq1]), ("Sq1DivHi", [v >> 8 for v in sq1]),
+            ("Sq2Div", sq2), ("TriDiv", tri), ("Sq2Div15", sq2s), ("TriDiv15", tris),
+            ("NoteFlags", flags), ("NesTimLo", [t & 0xFF for t in timers]),
+            ("NesTimHi", [t >> 8 for t in timers]), ("NoiseDiv", noise), ("DutyVol", duty),
+            ("TimerDiv", [divider_8bit(NES_CPU / 16 / (t + 1)) for t in range(0x800)]),
+            ("NoiseDist", NOISE_DIST)]
 
 
 def resume_music(rom):
@@ -88,12 +126,13 @@ def resume_music(rom):
 #   $F4 lo hi    go on at address hi:lo
 #   $F5 n        the note offset (shared by the channels: the dungeons'
 #                tunes step their key down with it as they play)
+#   $F6 n        the sweep unit (SQ2's, the effects': only the wings' use it)
 #   (Any other byte from $C9 on is not written.)
 
 MUSIC = 27                      # MSC_NOSOUND to MSC_LEVEL_UP.
 SFX = 22                        # SFX_FFDAMAGE to SFX_FIRE.
 SOUND_BASE = 0x8000             # Where the converted data starts in its bank.
-OP_TEMPO, OP_CNTRL0, OP_NOISE_VOL, OP_WAIT, OP_GOTO, OP_OFFSET = 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5
+OP_TEMPO, OP_CNTRL0, OP_NOISE_VOL, OP_WAIT, OP_GOTO, OP_OFFSET, OP_SWEEP = 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6
 
 
 def channel_part(rom, start, noise):
@@ -127,8 +166,8 @@ def channel_part(rom, start, noise):
             pass
         elif b == 0xFD:                 # MCTL_RETURN.
             addr = ret
-        elif b == 0xFA:                 # MCTL_CNTRL1: the sweep (not done).
-            byte()
+        elif b == 0xFA:                 # MCTL_CNTRL1: the sweep.
+            out += bytes([OP_SWEEP, byte()])
         elif b == 0xFB:                 # MCTL_CNTRL0.
             out += bytes([OP_CNTRL0, byte()])
         elif b == 0xF8:                 # MCTL_NOISE_VOL.
@@ -238,7 +277,7 @@ class GameModel:
             elif b == 0xFD:
                 self.ptr[c] = self.ret[c]
             elif b == 0xFA:
-                self.byte(c)
+                self.log.append(("sweep", hw, self.byte(c)))
             elif b == 0xFB:
                 self.log.append(("cntrl0", hw, self.byte(c)))
             elif b == 0xF8:
@@ -324,6 +363,8 @@ class NativeModel(GameModel):
                 self.ptr[c] = lo | hi << 8
             elif b == OP_OFFSET:
                 self.offset = self.byte(c)
+            elif b == OP_SWEEP:
+                self.log.append(("sweep", hw, self.byte(c)))
             elif b >= 0xE0:
                 self.log.append(("noise", b & 0x0F))
             elif b >= 0x80:

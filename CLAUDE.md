@@ -39,7 +39,7 @@ map, the banks, the character sets) before touching code.
     python3 tools/native/test.py build/dragon_warrior.nes build/tests [NAME...]
     python3 tools/native/measure.py build/dragon_warrior.nes build/measure
 
-- `test.py` runs the controller scripts in `native/scripts` (90 of them)
+- `test.py` runs the controller scripts in `native/scripts` (91 of them)
   and checks each script's `;EXPECT` lines against the screen and memory.
   The whole suite must pass before you push a code change. Walking must
   stay at the NES's 16 frames a step (`measure.py`).
@@ -57,6 +57,9 @@ map, the banks, the character sets) before touching code.
   named labels in anything non-trivial.
 - The program at $4000-$7FFF repeats in every bank. Code at $8000+ is
   per bank; call across banks with FarOut.
+- The VBI writes what ANTIC reads from the frame's first line first
+  (scroll, VDSLST, colors, SetAddresses), before line 16. Probe VCOUNT
+  if you add work there: late writes glitch on real hardware only.
 - Free program space is tight (about 630 bytes). Check the build's report.
 - Edit `tools/native/convert.py` with care: confirm a whole edit applied,
   because half-applied edits have broken it before.
@@ -66,6 +69,13 @@ map, the banks, the character sets) before touching code.
 - When behaviour changes, update README.md (what the port does, kept
   current: no log there), docs/HISTORY.md (the log, oldest first; mark
   replaced entries with *Now:*) and docs/ARCHITECTURE.md.
+- The browser builder (`web/`, published by `.github/workflows/pages.yml`
+  from the public repo only) runs build.py under Pyodide. Keep build.py
+  free of anything Pyodide lacks (no subprocess but the ophis fallback in
+  `assemble`, no native modules), and check it after build changes:
+  `web/make_site.py` a site, serve it, build in Chromium, and compare the
+  cartridge with `build.sh`'s (pass `?pyodide=` a local Pyodide when the
+  CDN is out of reach).
 - The public copy is zeiramwing/DQ52-Public. It holds no history: sync it
   only when the owner asks. First check every change since the last sync
   for game text, then copy `git archive HEAD` over its tree and commit

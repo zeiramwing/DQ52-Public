@@ -1016,3 +1016,65 @@ The program then had about 2.6KB free. Features since filled it; for room,
 the power-on screens, the password's making, the end credits and many
 tables run from or sit in other banks, and about 300 bytes are free.
 
+## The sound, closer to the NES
+
+Measured with `tools/native/compare_sound.py`, which runs the sound engine
+on a 6502 simulator and sets POKEY's pitch and loudness, channel by
+channel, against the NES's from the same state:
+
+- Channels 3 and 4 (SQ2, the triangle) switch to POKEY's 15kHz clock on a
+  frame a note of theirs is too low for 64kHz, when neither's note is out
+  of tune there (NoteFlags); else 64kHz, the low note an octave up as
+  before. Over the music: SQ2 34 cents off on average to 20, the
+  triangle 51 to 33; frames an octave off, SQ2's 97 to 44, the
+  triangle's 587 to 346 (those left are clashes: one note too low for
+  64kHz while the other is too high for 15kHz).
+- A pulse's duty: POKEY plays every tone at 50%, so a narrower pulse is
+  made as much quieter as it is on the NES (DutyVol: its wave's RMS, 12.5%
+  0.66, 25% and 75% 0.87). The triangle up from 10 to 13 (TRI_VOLUME): the
+  balance of SQ2 and the triangle against SQ1 is now the NES's (the
+  triangle 1.56 times SQ1, as on the NES; it was 1.03).
+- The sweep unit, the NES's, for the effects' SQ2: only the wings' flight
+  uses it (SweepFrame each frame of an effect, SweepOut for channel 3's
+  divider by the timer, TimerDiv), checked frame by frame against a model
+  of the NES's: the same, all 84 frames.
+- An effect's tone and noise both sounding: channel 3 plays the louder
+  (the wings' noise is at volume 1 under its tone, near silent on the
+  NES; it had hidden the tone).
+- The port's own touches stay, at the owner's wish, for some Atari
+  character: the lead voice's vibrato on long notes, and the effects'
+  noise textures (crackling fire, buzzing hits).
+
+The sound now takes 762 cycles a frame on average (647 before), at worst
+2262 (1741), during the wings' sweep.
+
+## The VBI's order (from the owner's tests: the shake)
+
+On a SuperStation One, when the hero was hit the screen sometimes went
+blank for a frame, or showed a brief glitch where a flash should be. A
+probe of VCOUNT in the VBI found the fine scroll written at line 42, well
+into the picture (it begins at line 16): it came after SetAddresses, the
+VBI's longest part (until line 44), and the colors after much else. A
+changed scroll (the shake) or color (a flash) then landed partway down a
+frame; the emulator forgave it, the hardware did not (a scroll changed
+mid-frame can change the frame's length, and the picture is lost). *Now:*
+the VBI writes first what ANTIC reads from the frame's first line: the
+fine scroll (by line 0), the interrupt vector, the colors (SetHardware,
+by line 6), then the rows' addresses (SetAddresses, begun in the blank
+and ahead of the rows); then DialogModes, and what readies the next
+frame (Effects, CursorBlink, MonsterShade), the frame count and the
+sound. The shake and flashes come a frame later, as Effects sets them
+for the next frame.
+
+## Turning before walking (from the owner's play on the NES)
+
+On the NES, a direction pressed while standing turns the hero at once, but
+the step waits for the game's 16-frame beat (DoJoyUp and the rest move
+only when FrameCounter AND 15 is 0), so a tap only turns him; the port
+stepped at once. *Now:* the same (Walk, SetFacing): from standing, the
+turn at once and the step on the beat (FrameCount AND 15 = 0) while the
+direction is held; walking on, the next step at once (the game's steps end
+on the beat anyway, and a frame run long must not cost a whole beat).
+Play builds only (WALK_BEAT): test builds step at once, as their scripts'
+short presses expect, but with `;WALK-BEAT`. Test: `walkbeat`.
+

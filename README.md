@@ -37,6 +37,16 @@ project's own code; it grants no rights to the game.
 
 ## Building and playing
 
+### In your browser
+
+The easiest way: open the **[cartridge builder](https://zeiramwing.github.io/DQ52-Public/)**,
+choose your ROM, and save the cartridge it makes. The build runs entirely
+in your browser (the same Python tools, in WebAssembly, through Pyodide):
+your ROM is never uploaded, and nothing is stored. It takes a few seconds,
+and the cartridge is byte for byte what `build.sh` makes.
+
+### On your own computer
+
     pip install ophis-asm
     ./build.sh path/to/Dragon_Warrior.nes
     atari800 -5200 -cart-type 74 -cart build/dwnative.bin
@@ -82,7 +92,7 @@ the 5200's hardware, and each change is the least that made the game fit.
 | **4 one-colour sprites**, not 64 | The hero is three sprites layered for his three colours. Townspeople and monsters are drawn into the background (below). |
 | **128 characters a set**, for map and window text together | Window text is in capitals. A town's graphics are capped to fit. A monster gets its own sets, two for the biggest. |
 | **No battery save** | The King gives a password that keeps everything the NES's adventure log keeps: name, experience, gold, items, keys, herbs, equipment, curses, the quest's progress, HP and MP. |
-| **4 sound channels, 8-bit pitch on most** | The lead voice has exact pitch (two channels joined). The second voice and the bass are 8-bit, so a few notes are slightly off. The square waves' duty settings and the wings' pitch sweep are not reproduced. Sound effects share the second voice's channel. |
+| **4 sound channels, 8-bit pitch on most** | The lead voice has exact pitch (two channels joined). The second voice and the bass are 8-bit; they switch to POKEY's slower clock on the frames a low note needs it, so few notes are off, and a bass note is raised an octave only when the two clash. POKEY's square waves are always 50%, so the NES's narrower pulses are made as much quieter as they are on the NES. The wings' pitch sweep is the NES's. Sound effects share the second voice's channel (the louder of an effect's tone and noise plays). |
 
 ### The townspeople stand still
 
@@ -145,13 +155,14 @@ the game and as touches of its own:
 | **Character sets in RAM** | Townspeople stepping in place, the overworld's swaying sea, the blinking cursor, a monster building up row by row on the overworld. |
 | **Fine scrolling** | The view scrolls a line or a colour clock at a time; hits shake the screen as on the NES. |
 | **Players** | The hero's three colours (two players overlapping make the third). The title's dragon, in front of its banner. |
-| **POKEY's 16-bit channels and noise** | Exact pitch and a vibrato for the lead voice. Crackling dragon fire; buzzing hits and force fields. The music is mixed a little softer and dips under the effects. |
+| **POKEY's 16-bit channels, clocks and noise** | Exact pitch for the lead voice, with a vibrato on its long notes; the other two switch clocks per frame to stay in tune. Crackling dragon fire; buzzing hits and force fields. The music is mixed a little softer and dips under the effects. |
 | **Attract mode** | After about 9 minutes untouched, the screen shifts hue and dims, as 5200 games do, until something is pressed. |
 | **SuperCart banking** (512KB) | The program is in every bank and the data in the switched half. Code that rarely runs (title, passwords, credits, story events) runs from a data bank. |
 
-Two touches are the port's own rather than the NES's: the light in dark
-places fades into the dark over a block (the NES's edge is hard), and the
-lead voice's long notes have a vibrato.
+Some touches are the port's own rather than the NES's, for a little
+Atari character: the light in dark places fades into the dark over a
+block (the NES's edge is hard), the lead voice's long notes have a
+vibrato, and some effects have POKEY's own noise textures.
 
 ## Known rough edges
 
@@ -199,6 +210,13 @@ NES's pace.
   `PROFILE=1`, `test.py` also times the sound work in the VBI.
 - `tools/native/profile_sound.py BUILDDIR [FRAMES]`: the sound engine's
   exact CPU cycles a frame, on a 6502 simulator (py65).
+- `web/`: the browser builder. `web/make_site.py OUTDIR` puts the site
+  together (the page, its worker, and `engine.zip`: the engine's sources
+  and tools with the Ophis assembler); `.github/workflows/pages.yml`
+  publishes it from the public repository to GitHub Pages.
+- `tools/native/compare_sound.py ROM BUILDDIR [FRAMES]`: the port's sound
+  against the NES's, channel by channel: how far off each pitch is, and
+  the balance of loudness between the channels.
 - `tools/native/password.py encode|decode`: the passwords in Python, for
   tests and for checking one by hand.
 - `tools/run5200.py CART --until ADDR [...]`: run a cartridge headless and

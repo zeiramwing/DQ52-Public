@@ -14,11 +14,16 @@
 ;frame's 4 quarter frames at once (as the NES's steps them), the linear
 ;counter; and the result goes in POKEY: SQ1 on channels 1+2 joined
 ;(16 bits at 1.79MHz), SQ2 or the noise (the sound effects') on channel 3,
-;the triangle on channel 4 (8 bits at 64kHz), all pure tones but the
-;noise. The square waves' duty cycles are not kept. POKEY's channels add
-;up as they are, without the NES's softening of a loud mix, so the music
-;plays at about half the game's loudness and at a third while an effect
-;sounds, the effect at its own loudness (MusicLoud).
+;the triangle on channel 4 (8 bits at 64kHz, both at 15kHz on a frame the
+;triangle's note is too low for 64kHz and channel 3's would still be in
+;tune there: NoteFlags), all pure tones but the noise. A pulse plays at
+;50% whatever its duty, so a narrower one is made as much quieter as it is
+;on the NES (DutyVol). The sweep unit is the NES's, for the effects' SQ2
+;(the wings' flight). The port's own touches: SQ1's vibrato on long notes,
+;and noise textures for some effects (NOISE_DIST). POKEY's channels add up as they are, without the
+;NES's softening of a loud mix, so the music plays at about half the
+;game's loudness and at a third while an effect sounds, the effect at its
+;own loudness (MusicLoud).
 ;
 ;PlayMusic / PlaySFX (A: the game's music or effect number) only ask: the
 ;VBI starts it, so the engine is never caught halfway.
@@ -30,10 +35,20 @@
 .alias OP_NOISE_VOL     $F2     ;
 .alias OP_WAIT          $F3     ;
 .alias OP_GOTO          $F4     ;
-.alias TRI_VOLUME       10      ;The triangle's loudness (it has no volume).
+.alias OP_SWEEP         $F6     ;
 .alias VIB_DELAY        20      ;Frames an SQ1 note sounds before its vibrato.
-.alias NoiseKind        $07CF   ;The effect's noise's distortion (AUDC's top bits: NoiseDist).
+.alias NoiseKind        $07CF   ;The effect's noise's texture (AUDC's top bits: NoiseDist).
 .alias VibAge           $07D0   ;Frames SQ1's note has sounded (to 255).
+.alias TRI_VOLUME       13      ;The triangle's loudness (it has no volume):
+                                ;its balance with the pulses the NES's.
+;The sweep unit (the NES's $4001, the effects' SQ2): its byte, its
+;divider, its reload flag, and SQ2's timer as it sweeps.
+.alias SweepCfg         $07FB   ;
+.alias SweepDiv         $07FC   ;
+.alias SweepReload      $07FD   ;
+.alias SweepLo          $07FE   ;
+.alias SweepHi          $07FF   ;
+.alias SndSlow          $73     ;Channels 3 and 4 at 15kHz this frame (ToPokey).
 
 ;The game's software registers, X = 0 SQ1, 2 SQ2, 4 TRI, 6 noise.
 .alias ChIndex          $40     ;8: data pointers (zero page, for (ChIndex,X)),
@@ -222,9 +237,10 @@ InitChannel:
 ;Sound effect A (0 on): on the noise channel's data, SQ2's hardware.
 InitSFX:
         TAX                     ;
+        LDA #$00                ;No sweep until it asks for one.
+        STA SweepCfg            ;
         LDA NoiseDist,X         ;Its noise's texture (sound.py's NOISE_DIST,
-                                ;in SOUND_BANK, in now).
-        STA NoiseKind           ;
+        STA NoiseKind           ;in SOUND_BANK, in now: the port's own).
         LDA SFX_LO,X             ;
         STA ChIndex+6           ;
         LDA SFX_HI,X             ;
@@ -339,6 +355,12 @@ SndCntrl0:
         PLA                     ;
         STA ChIndex,X           ;
         JMP ProcessByte         ;
+*       CMP #OP_SWEEP           ;
+        BNE +                   ;
+        JSR GetByte             ;$F6: the sweep (written as $4001 is: its
+        STA SweepCfg            ;divider reloaded at the next half frame).
+        STA SweepReload         ;
+        JMP ProcessByte         ;
 *       JSR GetByte             ;$F5: the note offset.
         STA NoteOffset          ;
         JMP ProcessByte         ;
@@ -366,6 +388,16 @@ SndNote:
         BNE NoteAged            ;
         STY VibAge              ;
 NoteAged:
+        CPY #$01                ;(SQ2's: its timer, for the sweep.)
+        BNE NoteTimed           ;
+        STX SndTemp             ;
+        TAX                     ;
+        LDA NesTimLo,X          ;
+        STA SweepLo             ;
+        LDA NesTimHi,X          ;
+        STA SweepHi             ;
+        LDX SndTemp             ;
+NoteTimed:
         JSR StartNote           ;
         JMP ProcessByte         ;
 
@@ -504,16 +536,23 @@ ToPokey:
         LDY #16                 ;
 PokeyLoud:
         STY SndTemp             ;
+        LDA SweepCfg            ;An effect's sweep runs every frame, heard
+        BPL PokeyNoSweep        ;or not (the noise may have channel 3).
+        LDA SFXActive           ;
+        BEQ PokeyNoSweep        ;
+        JSR SweepFrame          ;
+PokeyNoSweep:
         LDA VibAge              ;
         CMP #$FF                ;
-        BEQ +                   ;
+        BEQ VibAged             ;
         INC VibAge              ;
-*       LDX ChNote              ;SQ1: channels 1+2, with a vibrato once a
-        LDA VibAge              ;note has sounded VIB_DELAY frames: its
-        CMP #VIB_DELAY          ;divider and up to twice its high byte more
-        BCC VibNone             ;or less (about 14 cents), a cycle each 16
-        LDA FrameCount          ;frames (VibMul: by the phase, the second
-        LSR                     ;half less).
+VibAged:
+        LDX ChNote              ;SQ1: channels 1+2, 16 bits, with a vibrato
+        LDA VibAge              ;(the port's own) once a note has sounded
+        CMP #VIB_DELAY          ;VIB_DELAY frames: its divider and up to
+        BCC VibNone             ;twice its high byte more or less (about 14
+        LDA FrameCount          ;cents), a cycle each 16 frames (VibMul: by
+        LSR                     ;the phase, the second half less).
         AND #$07                ;
         TAY                     ;
         LDA Sq1DivHi,X          ;
@@ -521,9 +560,10 @@ PokeyLoud:
         LDA VibMul,Y            ;
         BEQ VibNone             ;
         CMP #$02                ;
-        BNE +                   ;
+        BNE VibOnce             ;
         ASL SndTemp2            ;
-*       LDA Sq1DivLo,X          ;
+VibOnce:
+        LDA Sq1DivLo,X          ;
         CPY #$04                ;
         BCS VibDown             ;
         CLC                     ;
@@ -549,11 +589,53 @@ VibNone:
 VibDone:
         LDA #$00                ;
         STA AUDC1               ;
-        LDA ChVol               ;
+        LDY #$00                ;
+        JSR DutyLoud            ;
         JSR MusicLoud           ;
         STA AUDC2               ;
+        LDA #$00                ;Channels 3 and 4 at 15kHz (SndSlow 1) when
+        STA SndSlow             ;a note of theirs is too low for 64kHz
+        STA SndTemp2            ;(SndTemp2) and none is out of tune there
+        STA ApuClocks           ;(ApuClocks), by NoteFlags: bit 7 the
+        LDA ChVol+3             ;triangle's too low, 4 in tune; 5 SQ2's too
+        ORA SFXActive           ;low, 6 in tune. Never under an effect.
+        BNE PokeyClock          ;Else 64kHz, a low note an octave up.
+        LDA ChVol+2             ;
+        BEQ PokeyNoTri          ;
+        LDX ChNote+2            ;
+        LDA NoteFlags,X         ;
+        AND #$80                ;
+        STA SndTemp2            ;
+        LDA NoteFlags,X         ;
+        AND #$10                ;
+        BNE PokeyNoTri          ;
+        INC ApuClocks           ;
+PokeyNoTri:
+        LDA ChVol+1             ;
+        BEQ PokeyDecide         ;
+        LDX ChNote+1            ;
+        LDA NoteFlags,X         ;
+        AND #$20                ;
+        ORA SndTemp2            ;
+        STA SndTemp2            ;
+        LDA NoteFlags,X         ;
+        AND #$40                ;
+        BNE PokeyDecide         ;
+        INC ApuClocks           ;
+PokeyDecide:
+        LDA SndTemp2            ;
+        BEQ PokeyClock          ;
+        LDA ApuClocks           ;
+        BNE PokeyClock          ;
+        INC SndSlow             ;
+PokeyClock:
+        LDA SndSlow             ;
+        ORA #$50                ;(Channels 1+2 joined, 1 at 1.79MHz.)
+        STA AUDCTL              ;
         LDA ChVol+3             ;Channel 3: the noise while it sounds, else
-        BEQ PokeySq2            ;SQ2.
+        BEQ PokeySq2            ;SQ2; both (an effect's), the louder.
+        CMP ChVol+1             ;
+        BCC PokeySq2            ;
         ORA NoiseKind           ;(Its texture: NoiseDist.)
         STA AUDC3               ;
         LDX ChNote+3            ;
@@ -563,23 +645,162 @@ VibDone:
 PokeySq2:
         LDX ChNote+1            ;
         LDA Sq2Div,X            ;
+        LDY SndSlow             ;
+        BEQ PokeySq2Div         ;
+        LDA Sq2Div15,X          ;
+PokeySq2Div:
         STA AUDF3               ;
-        LDA ChVol+1             ;
+        LDY #$01                ;
+        JSR DutyLoud            ;
         LDX SFXActive           ;(An effect's tone at its own loudness.)
         BNE PokeySfx            ;
         JSR MusicLoud           ;
         JMP PokeySq2Set         ;
 PokeySfx:
+        LDX SweepCfg            ;Sweeping (the wings): the swept timer's
+        BPL PokeySfxVol         ;divider, or silent when the sweep mutes.
+        PHA                     ;
+        JSR SweepOut            ;
+        PLA                     ;
+        BCC PokeySfxVol         ;
+        LDA #$00                ;
+PokeySfxVol:
         ORA #$A0                ;
 PokeySq2Set:
         STA AUDC3               ;
 PokeyTri:
         LDX ChNote+2            ;Channel 4: the triangle.
         LDA TriDiv,X            ;
+        LDY SndSlow             ;
+        BEQ PokeyTriDiv         ;
+        LDA TriDiv15,X          ;
+PokeyTriDiv:
         STA AUDF4               ;
         LDA ChVol+2             ;
         JSR MusicLoud           ;
         STA AUDC4               ;
+        RTS                     ;
+
+;A = channel Y's volume as loud as the NES's pulse of its duty (DutyVol,
+;in SOUND_BANK: by the duty, the top bits of its control byte).
+DutyLoud:
+        LDA ChCtl,Y             ;
+        AND #$C0                ;
+        LSR                     ;
+        LSR                     ;
+        ORA ChVol,Y             ;
+        TAX                     ;
+        LDA DutyVol,X           ;
+        RTS                     ;
+
+;A frame of the sweep unit (the NES's, for SQ2): its two half frames.
+SweepFrame:
+        LDY #$02                ;
+SweepHalf:
+        JSR SweepTarget         ;At the divider's end: the timer to the
+        LDA SweepDiv            ;target, unless it mutes or shifts by 0.
+        BNE SweepCount          ;
+        BCS SweepCount          ;
+        LDA SweepCfg            ;
+        AND #$07                ;
+        BEQ SweepCount          ;
+        LDA SndTemp2            ;
+        STA SweepLo             ;
+        LDA ApuClocks           ;
+        STA SweepHi             ;
+SweepCount:
+        LDA SweepDiv            ;Then the divider: reloaded with the
+        BEQ SweepLoad           ;period at its end or when written, else
+        LDA SweepReload         ;counted down.
+        BNE SweepLoad           ;
+        DEC SweepDiv            ;
+        JMP SweepNext           ;
+SweepLoad:
+        LDA SweepCfg            ;
+        LSR                     ;
+        LSR                     ;
+        LSR                     ;
+        LSR                     ;
+        AND #$07                ;
+        STA SweepDiv            ;
+        LDA #$00                ;
+        STA SweepReload         ;
+SweepNext:
+        DEY                     ;
+        BNE SweepHalf           ;
+        RTS                     ;
+
+;Channel 3's divider for the swept timer (TimerDiv); carry set if the sweep
+;mutes it (the timer below 8, or the target past $7FF).
+SweepOut:
+        LDA SweepLo             ;The divider: TimerDiv + the timer.
+        STA SndTemp2            ;
+        LDA SweepHi             ;
+        AND #$07                ;
+        CLC                     ;
+        ADC #>TimerDiv          ;
+        STA ApuClocks           ;
+        LDA SndTemp2            ;
+        CLC                     ;
+        ADC #<TimerDiv          ;
+        STA SndTemp2            ;
+        BCC SweepRead           ;
+        INC ApuClocks           ;
+SweepRead:
+        LDY #$00                ;
+        LDA (SndTemp2),Y        ;
+        STA AUDF3               ;
+        ;Fall through: the carry says whether it mutes.
+
+;SndTemp2/ApuClocks = the sweep's target: the timer, and it shifted right
+;by the shift, added (or, negated, taken away: SQ2's). Carry set: it mutes.
+SweepTarget:
+        LDA SweepLo             ;
+        STA SndTemp2            ;
+        LDA SweepHi             ;
+        STA ApuClocks           ;
+        LDA SweepCfg            ;
+        AND #$07                ;
+        TAX                     ;
+        BEQ SweepShifted        ;
+SweepShift:
+        LSR ApuClocks           ;
+        ROR SndTemp2            ;
+        DEX                     ;
+        BNE SweepShift          ;
+SweepShifted:
+        LDA SweepCfg            ;
+        AND #$08                ;
+        BNE SweepDown           ;
+        CLC                     ;
+        LDA SweepLo             ;
+        ADC SndTemp2            ;
+        STA SndTemp2            ;
+        LDA SweepHi             ;
+        ADC ApuClocks           ;
+        STA ApuClocks           ;
+        CMP #$08                ;
+        BCS SweepMute           ;
+        BCC SweepLow            ;
+SweepDown:
+        SEC                     ;
+        LDA SweepLo             ;
+        SBC SndTemp2            ;
+        STA SndTemp2            ;
+        LDA SweepHi             ;
+        SBC ApuClocks           ;
+        STA ApuClocks           ;
+SweepLow:
+        LDA SweepHi             ;
+        BNE SweepOn             ;
+        LDA SweepLo             ;
+        CMP #$08                ;
+        BCC SweepMute           ;
+SweepOn:
+        CLC                     ;
+        RTS                     ;
+SweepMute:
+        SEC                     ;
         RTS                     ;
 
 ;A = a music channel's volume A (0-15) as POKEY plays it, pure tone:

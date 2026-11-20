@@ -14,7 +14,7 @@ that must be 0 then, such as Missed (frames the main loop missed), and
 `;EXPECT-BYTE: label N` a byte that must be N. A
 `;START: MAP,X,Y` line starts the hero there (build.py --start), and a
 `;FIGHT: N` line makes every step on the overworld a fight with enemy N, and
-a `;GOLD: N` line gives the hero N gold to start with (`;KEYS: N`, keys; `;ITEM: N[,N...]`, items by their ITM_ codes; `;LEVEL: N`, a hero of that level, HP and MP full; `;EXP: N`, experience; `;EQUIP: N`, the equipment byte; `;FLAGS: N`, ModFlags; `;HURT: N`, N HP short; `;DRAIN: N`, N MP short; `;SEED: N`, each battle's random numbers from N (a fight whose result is luck the same each run); `;NAME-ENTRY`, the name window at power-on; `;FADE`, the fades between maps, which test builds otherwise leave out). The
+a `;GOLD: N` line gives the hero N gold to start with (`;KEYS: N`, keys; `;ITEM: N[,N...]`, items by their ITM_ codes; `;LEVEL: N`, a hero of that level, HP and MP full; `;EXP: N`, experience; `;EQUIP: N`, the equipment byte; `;FLAGS: N`, ModFlags; `;HURT: N`, N HP short; `;DRAIN: N`, N MP short; `;SEED: N`, each battle's random numbers from N (a fight whose result is luck the same each run); `;NAME-ENTRY`, the name window at power-on; `;FADE`, the fades between maps, which test builds otherwise leave out; `;WALK-BEAT`, a step from standing only on the game's 16-frame beat, as the play build, where test builds step at once). The
 screen is read back from the ring as text: the window rows through set A's
 characters, the dialog window's rows (18 on, while it is up) through set
 B's. Runs every script with EXPECT lines, or those named. PROFILE=1 (or a
@@ -157,6 +157,7 @@ def run(rom_path, out_root, name):
     profile = PROFILE or ";PROFILE" in open(script).read()
     name_entry = ";NAME-ENTRY" in open(script).read()
     fade = ";FADE" in open(script).read()
+    walk_beat = ";WALK-BEAT" in open(script).read()
     subprocess.run([sys.executable, os.path.join(HERE, "build.py"), rom_path, out,
                     "--script", name] + (["--start", start[0]] if start else [])
                    + (["--fight", fight[0]] if fight else [])
@@ -164,6 +165,7 @@ def run(rom_path, out_root, name):
                    + (["--keys", keys[0]] if keys else [])
                    + (["--name-entry"] if name_entry else [])
                    + (["--fade"] if fade else [])
+                   + (["--walk-beat"] if walk_beat else [])
                    + (["--item", item[0]] if item else [])
                    + (["--level", level[0]] if level else [])
                    + (["--exp", exp[0]] if exp else [])

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DQ52 Cartridge Builder</title>
+<meta name="description" content="Build the DQ52 Atari 5200 cartridge from your own Dragon Warrior ROM, entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101018; --panel: #1a1a26; --ink: #ececf4; --dim: #a8a8bc;
+    --gold: #f2d43a; --amber: #f2a33a; --flame: #e8572a; --rose: #c8306b; --violet: #7b3fa0;
+    --ok: #6fd08c; --bad: #ff6b6b; --line: #2c2c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .stripes { height: 26px; background: linear-gradient(var(--gold) 0 18%, transparent 18% 22%,
+    var(--amber) 22% 40%, transparent 40% 44%, var(--flame) 44% 62%, transparent 62% 66%,
+    var(--rose) 66% 84%, transparent 84% 88%, var(--violet) 88% 100%); }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 48px; }
+  h1 { font: 34px/1.2 "Press Start 2P", monospace; margin: 8px 0 6px; letter-spacing: 2px; }
+  .sub { font: 11px/1.6 "Press Start 2P", monospace; color: var(--gold); margin: 0 0 22px; }
+  .art { display: block; width: 100%; height: auto; image-rendering: pixelated; border: 3px solid #f4ecd8;
+    outline: 2px solid var(--flame); outline-offset: 2px; border-radius: 6px; margin: 0 0 26px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin: 0 0 18px; }
+  h2 { font: 13px/1.5 "Press Start 2P", monospace; color: var(--amber); margin: 0 0 12px; }
+  .drop { display: block; border: 2px dashed var(--dim); border-radius: 10px; padding: 26px 16px; text-align: center;
+    cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over { border-color: var(--gold); background: #222232; }
+  .drop strong { color: var(--gold); }
+  input[type=file] { display: none; }
+  button, .button {
+    font: 12px/1 "Press Start 2P", monospace; color: #101018; background: var(--gold);
+    border: 0; border-radius: 6px; padding: 14px 18px; cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  button:disabled { background: #555566; color: #9999aa; cursor: default; }
+  #status { margin: 14px 0 0; min-height: 1.5em; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre#log { background: #0b0b12; border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 14px 0 0;
+    max-height: 220px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--dim);
+    white-space: pre-wrap; word-break: break-word; display: none; }
+  .bar { height: 10px; background: #0b0b12; border-radius: 5px; overflow: hidden; margin: 14px 0 0; display: none; }
+  .bar > div { height: 100%; width: 30%; background: linear-gradient(90deg, var(--gold), var(--flame));
+    animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  ul { padding-left: 1.2em; margin: 0; } li { margin: 4px 0; }
+  .fine { color: var(--dim); font-size: 14px; }
+  a { color: var(--gold); }
+  code { font: 14px ui-monospace, Menlo, Consolas, monospace; color: var(--amber); }
+  @media (max-width: 520px) { h1 { font-size: 24px; } .sub { font-size: 9px; } }
+</style>
+</head>
+<body>
+<div class="stripes"></div>
+<main>
+  <h1>DQ52</h1>
+  <p class="sub">Atari 5200 cartridge builder</p>
+  <img class="art" src="art.png" width="208" height="88" alt="A knight on a crag faces a fire-breathing dragon under a full moon">
+
+  <div class="card">
+    <h2>1. Your ROM</h2>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".nes,application/octet-stream">
+      <strong>Choose your Dragon Warrior ROM</strong><br>
+      <span class="fine">or drop the .nes file here (the USA release, rev0 or rev1)</span>
+    </label>
+    <div id="status" class="fine">Getting the builder ready…</div>
+    <div class="bar" id="bar"><div></div></div>
+    <pre id="log"></pre>
+  </div>
+
+  <div class="card">
+    <h2>2. Your cartridge</h2>
+    <p id="result" class="fine">When the build finishes, the cartridge image appears here to save.</p>
+  </div>
+
+  <div class="card">
+    <h2>Your ROM stays with you</h2>
+    <ul class="fine">
+      <li>The whole build runs here in your browser, in Python compiled to WebAssembly. Your ROM is read from your disk into this page's memory and nowhere else: it is not uploaded, and nothing is stored.</li>
+      <li>The cartridge you save contains data converted from your ROM. It is for you, the ROM's owner, only: please don't share it.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Playing it</h2>
+    <ul class="fine">
+      <li>The image is a 512KB SuperCart. In the atari800 emulator: <code>atari800 -5200 -cart-type 74 -cart dq52.bin</code>.</li>
+      <li>On real hardware, use a flash cartridge or FPGA system that supports 512KB SuperCart banking.</li>
+      <li>Building it yourself instead: see the <a href="https://github.com/zeiramwing/DQ52-Public">project page</a>.</li>
+    </ul>
+  </div>
+  <p class="fine">DQ52 is a fan project, not affiliated with or endorsed by the game's owners. Its code is MIT licensed; it grants no rights to the game.</p>
+</main>
+
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const PYODIDE = params.get("pyodide") || "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
+  const $ = (id) => document.getElementById(id);
+  const status = $("status"), log = $("log"), bar = $("bar"), result = $("result"), drop = $("drop"), file = $("file");
+  let ready = false, busy = false, url = null, buildLog = [];
+
+  function say(text, cls) { status.textContent = text; status.className = cls || "fine"; }
+  function note(text) { log.style.display = "block"; log.textContent += text + "\n"; log.scrollTop = log.scrollHeight; }
+
+  const worker = new Worker("worker.js");
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "ready") {
+      ready = true;
+      say("Ready. Choose your ROM to build the cartridge.");
+    } else if (m.type === "progress") {
+      say(m.text);
+    } else if (m.type === "log") {
+      buildLog.push(m.text);
+    } else if (m.type === "done") {
+      busy = false; bar.style.display = "none";
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(new Blob([m.cart], { type: "application/octet-stream" }));
+      say(`Built in ${m.seconds.toFixed(1)} s.`, "ok");
+      result.innerHTML = "";
+      const a = document.createElement("a");
+      a.href = url; a.download = "dq52.bin"; a.className = "button"; a.textContent = "Save dq52.bin";
+      const p = document.createElement("p");
+      p.className = "fine";
+      p.textContent = `${m.cart.byteLength / 1024} KB, made just now from your ROM. Nothing left this computer.`;
+      result.append(a, p);
+    } else if (m.type === "error") {
+      busy = false; bar.style.display = "none";
+      say(m.text, "bad");
+      buildLog.forEach(note);
+      result.innerHTML = '<span class="fine">No cartridge this time.</span>';
+    }
+  };
+  worker.onerror = (e) => { say("The builder could not start: " + (e.message || "unknown error"), "bad"); };
+  worker.postMessage({ type: "init", pyodide: PYODIDE });
+
+  function start(f) {
+    if (!f) return;
+    if (!ready) { say("The builder is still loading, one moment, then choose the ROM again.", "bad"); return; }
+    if (busy) return;
+    busy = true; buildLog = []; log.textContent = ""; log.style.display = "none"; bar.style.display = "block";
+    result.innerHTML = '<span class="fine">Building…</span>';
+    say(`Reading ${f.name}…`);
+    f.arrayBuffer().then((buf) => worker.postMessage({ type: "build", rom: buf }, [buf]));
+  }
+  file.addEventListener("change", () => { start(file.files[0]); file.value = ""; });
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => start(e.dataTransfer.files[0]));
+})();
+</script>
+</body>
+</html>

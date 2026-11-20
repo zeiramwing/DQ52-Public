@@ -414,6 +414,16 @@ Walk:
 *       LDA Stick               ;
         BEQ Stand               ;
         JSR HideStatus          ;
+        LDA #WALK_BEAT          ;From standing, as the game does (DoJoyUp
+        BEQ WalkGo              ;and the rest): the hero turns at once, and
+        LDA StandTime           ;steps only on its 16-frame beat (FrameCount
+        BEQ WalkGo              ;AND 15 = 0), so a tap only turns him.
+        JSR SetFacing           ;Walking on (StandTime 0), at once: the game's
+        LDA FrameCount          ;steps end on the beat anyway, and a long
+        AND #$0F                ;frame must not cost a beat. (Test builds
+        BEQ WalkGo              ;step at once but with ;WALK-BEAT.)
+        JMP Frame               ;
+WalkGo:
         `prof_begin 5
         JSR StartStep           ;
         `prof_end 5
@@ -831,14 +841,21 @@ GoLinkFrom:
 
 ;Start a step in the first direction held (up, right, down, left), unless a
 ;wall or a townsperson is there: then just face it.
-StartStep:
+;Facing (and X) from the stick: 0 up, 1 right, 2 down, 3 left.
+SetFacing:
         LDX #$00                ;
         LDA Stick               ;
-*       LSR                     ;
-        BCS +                   ;
+FacingBit:
+        LSR                     ;
+        BCS FacingSet           ;
         INX                     ;
-        BNE -                   ;
-*       STX Facing              ;
+        BNE FacingBit           ;
+FacingSet:
+        STX Facing              ;
+        RTS                     ;
+
+StartStep:
+        JSR SetFacing           ;
         LDA HeroX               ;The block ahead.
         CLC                     ;
         ADC DirX,X              ;
@@ -1972,6 +1989,17 @@ VBI:
         PHA                     ;
         TYA                     ;
         PHA                     ;
+        LDA IsParked            ;First what ANTIC reads from the frame's
+        BNE VbiHeld             ;first line: the fine scroll (and the hero's
+        LDA ShH                 ;shake, as Effects set it last frame), the
+        CLC                     ;interrupts, the colors, then the rows'
+        ADC ShakeH              ;addresses (SetAddresses: the longest, but
+        STA HSCROL              ;begun in the blank it keeps ahead of the
+        LDA ShV                 ;rows). Written later, they came into the
+        CLC                     ;picture: a changed scroll (the shake) or
+        ADC ShakeV              ;color (a flash) broke the frame on real
+        STA VSCROL              ;hardware. What only readies the next frame
+VbiHeld:                        ;comes after.
         LDA EndPending          ;The battle's display ended, all in this VBI
         BEQ +                   ;(EndBattle's): the map's rows from the ring,
         LDA #$00                ;its interrupts and modes, the hero shown.
@@ -1983,18 +2011,14 @@ VBI:
         LDA #HERO_HPOS          ;
         JSR HeroAt              ;
 *       LDA StartPending        ;The battle's display begun, all in this VBI
-        BEQ +                   ;(StartBattle's, the scene drawn under the
+        BEQ VbiStarted          ;(StartBattle's, the scene drawn under the
         LDA #$00                ;held screen): the rows from the ring, the
         STA StartPending        ;battle's interrupts.
         STA Frozen              ;
         LDA #$01                ;
         STA BattleOn            ;
         JSR DLIBits             ;
-*       JSR Effects             ;
-        JSR CursorBlink         ;
-        JSR SetHardware         ;
-        JSR DialogModes         ;
-        JSR MonsterShade        ;
+VbiStarted:
         LDX #<DLINone           ;The interrupts: a battle's own chain, or
         LDY #>DLINone           ;the dialog window's while it is up (chosen
         LDA DialogOn            ;here, so the interrupt has nothing to test
@@ -2019,20 +2043,21 @@ DliChosen:
         LDY #>TitleDLI          ;
 *       STX VDSLST              ;
         STY VDSLST+1            ;
+        JSR SetHardware         ;
+        LDA IsParked            ;
+        BNE VbiReady            ;
+        JSR SetAddresses        ;
+VbiReady:
+        JSR DialogModes         ;
+        JSR Effects             ;
+        JSR CursorBlink         ;
+        JSR MonsterShade        ;
         LDA IsParked            ;
         BNE VBIDone             ;
         INC FrameCount          ;
-        BNE +                   ;
+        BNE VbiCounted          ;
         INC FrameHi             ;
-*       JSR SetAddresses        ;
-        LDA ShH                 ;(And the hero's shake.)
-        CLC                     ;
-        ADC ShakeH              ;
-        STA HSCROL              ;
-        LDA ShV                 ;
-        CLC                     ;
-        ADC ShakeV              ;
-        STA VSCROL              ;
+VbiCounted:
         LDA POT0                ;The last scan's stick, finished (read in
         STA PotX                ;the main loop the pots are still counting).
         LDA POT1                ;

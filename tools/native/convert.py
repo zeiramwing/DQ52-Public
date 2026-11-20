@@ -814,14 +814,11 @@ def write_all(rom_path, out_dir):
     # Then the POKEY dividers for each note (sound.py), read by ToPokey
     # with the bank in: SQ1 (16 bits), SQ2 and the triangle (8 bits), and
     # the noise channel's periods.
-    sq1, sq2, tri, noise = sound.tables(rom)
+    pokey_tables = sound.tables(rom)
     div_at = sound_tables_at + len(sound_tables)
-    dividers = bytes([v & 0xFF for v in sq1] + [v >> 8 for v in sq1] + sq2 + tri + noise)
-    # Then each effect's noise texture (sound.py's NOISE_DIST: AUDC's
-    # distortion bits; the port's own).
-    noise_dist_at = div_at + len(dividers)
+    dividers = bytes(b for _, t in pokey_tables for b in t)
     with open(os.path.join(out_dir, "sound.bin"), "wb") as f:
-        f.write(sound_data + sound_tables + dividers + bytes(sound.NOISE_DIST))
+        f.write(sound_data + sound_tables + dividers)
     with open(os.path.join(out_dir, "peopledata.bin"), "wb") as f:
         f.write(bytes(p[k] for k in range(6) for p in everyone) or bytes(6))
     # The text bank: the text, then the enemies' and the items' names (read
@@ -1067,13 +1064,12 @@ def write_all(rom_path, out_dir):
         f.write(f".alias MUSIC_HI         ${sound_tables_at + n_parts:04X}\n")
         f.write(f".alias SFX_LO           ${sound_tables_at + 2 * n_parts:04X}\n")
         f.write(f".alias SFX_HI           ${sound_tables_at + 2 * n_parts + n_sfx:04X}\n")
-        f.write(f".alias NUM_NOTES        {len(sq1)}\n")
-        f.write(";POKEY dividers for each note, in SOUND_BANK (sound.py).\n")
-        n = len(sq1)
-        for k, label in enumerate(("Sq1DivLo", "Sq1DivHi", "Sq2Div", "TriDiv")):
-            f.write(f".alias {label:16s} ${div_at + k * n:04X}\n")
-        f.write(f".alias NoiseDiv         ${div_at + 4 * n:04X}\n")
-        f.write(f".alias NoiseDist        ${noise_dist_at:04X}\n")
+        f.write(f".alias NUM_NOTES        {sound.NOTES}\n")
+        f.write(";POKEY's tables, in SOUND_BANK (sound.py's tables).\n")
+        at = div_at
+        for label, t in pokey_tables:
+            f.write(f".alias {label:16s} ${at:04X}\n")
+            at += len(t)
         resume = sound.resume_music(rom)
         f.write(";Each map's music (the game's ResumeMusicTbl, by its map number).\n")
     return counts, len(tiles) + 1, len(text)

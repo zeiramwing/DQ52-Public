@@ -88,10 +88,10 @@ Rules for code there:
 
 | Range | What |
 |---|---|
-| $00-$FF | zero page: pointers (`Ptr`, `MapPtr`, `DstPtr`...), the frame counter, `Mode`; $D0-$D3 the battle's held screen (`BufPtr`, `RowPtr`: FreezeView); $D8-$D9 the light's ring (`CharAdd`, `RingW`) |
+| $00-$FF | zero page: pointers (`Ptr`, `MapPtr`, `DstPtr`...), the frame counter, `Mode`; $73 `SndSlow` (channels 3 and 4 at 15kHz this frame); $D0-$D3 the battle's held screen (`BufPtr`, `RowPtr`: FreezeView); $D8-$D9 the light's ring (`CharAdd`, `RingW`) |
 | $0200-$02FF | the hero (`HeroName` $0240 on: level, HP, gold, stats, items), shop and list state |
 | $0300 | the display list |
-| $0400-$07FF | townspeople arrays, enemy record, map record (`MapRec` $0770), password and power-on state; $07Bx-$07Cx: flash, fades, credits, title; $07D2-$07D8 the hit and spell effects (`FxKind`, `FxTime`, `TintHue`, `ShakeH`/`ShakeV`, `BlinkOff`, `FxTint`), $07D9-$07DA the battle's end (`Frozen`, `EndPending`), $07DB-$07DD idle time and attract mode (`IdleLo`, `IdleHi`, `AttractMask`), $07DE-$07DF the text's speed (`TextSpeed`, `TextWait`), $07E0 `VbiOn`, $07E1 `QuietLoad`, $07E2-$07F2 the cursor's blink (`CursorClock`, `ArrowA`, `ArrowL`), $07F3 `TitleBand`, $07F4 `DlgInk`, $07F5-$07F9 `ShownColors` (the colours the VBI set, for the interrupts), $07FA `StartPending` |
+| $0400-$07FF | townspeople arrays, enemy record, map record (`MapRec` $0770), password and power-on state; $07Bx-$07Cx: flash, fades, credits, title; $07D2-$07D8 the hit and spell effects (`FxKind`, `FxTime`, `TintHue`, `ShakeH`/`ShakeV`, `BlinkOff`, `FxTint`), $07D9-$07DA the battle's end (`Frozen`, `EndPending`), $07DB-$07DD idle time and attract mode (`IdleLo`, `IdleHi`, `AttractMask`), $07DE-$07DF the text's speed (`TextSpeed`, `TextWait`), $07E0 `VbiOn`, $07E1 `QuietLoad`, $07E2-$07F2 the cursor's blink (`CursorClock`, `ArrowA`, `ArrowL`), $07F3 `TitleBand`, $07F4 `DlgInk`, $07F5-$07F9 `ShownColors` (the colours the VBI set, for the interrupts), $07FA `StartPending`, $07FB-$07FF the sweep unit (`SweepCfg`, `SweepDiv`, `SweepReload`, `SweepLo`/`SweepHi`) |
 | $0800-$0BFF | tables copied from bank 7 at boot (text tile codes, window templates) |
 | $0C00-$0FFF | player/missile graphics (players 0-2 the hero; player 3's memory, $0F00, holds rows 0-4 of a battle's last screen, `FreezeBuf`, HPOSP3 kept 0) |
 | $1000-$1FFF | the screen: a ring of 32 rows × 128 bytes (64 columns, each twice), scrolled; the normal playfield shows 40 columns, -4 to 35 of the windows' 0-31 |
@@ -194,6 +194,21 @@ What would work, if RAM were ever short:
 Neither is worth it while program space, not RAM, is what runs out first
 (the fix for that is moving code to the data banks, as `poweron.asm`).
 
+Looked at again (and held, by the owner's choice): set B from ROM would
+free $2400-$27FF, for code (about 1KB more program space, always in
+whatever the bank) or for a second map set (blocks' top halves in one,
+bottom halves in the other, switched per row: about 256 map characters,
+room for lower case in the windows). But no 1KB-aligned block is free at
+the same address in all 16 banks, below the switches at $BFC0: bank 1
+(text and names) is full to $BFBF, bank 2's 15 towns end at $BBFF, bank
+4's monsters at $BDCA, bank 13's at $BA9F, bank 8's credits at $B99A, the
+overworld (bank 0) at $B83F. $B800-$BBFF everywhere would mean moving a
+town page to bank 12, some monsters to banks 5 and 6, the names out of
+bank 1, the credits within bank 8 and 64 bytes of bank 0, with the
+converters' tables to match. And a second map set needs its RAM in
+battles too (they compose their bands from the map's characters), where
+$3000-$3BFF is the battle's own.
+
 ## Display interrupts
 
 The VBI chooses each frame's display list interrupt (`VDSLST`) from the
@@ -260,6 +275,11 @@ a step. The whole suite takes about an hour; run it before pushing.
 - **Zero-page pointers are shared.** `Ptr` is used by `PutChar`, and
   `TextPtr` by message printing. Use RAM, or reload the pointer before
   each use, if other routines can run in between.
+- **The VBI's order matters.** What ANTIC reads from the frame's first
+  line (the fine scroll, the interrupt vector, the colors, the rows'
+  addresses) is written first, before the picture starts at line 16; what
+  only readies the next frame comes after. Written late, a change lands
+  mid-frame: the emulator forgives it, real hardware does not.
 - **Display interrupts have only a few cycles before `WSYNC`.** See
   above: a line across a band's top edge means too much work before it.
 - **Program space is tight.** Move rarely-run code into `poweron.asm`

@@ -2,7 +2,7 @@
 """Build the native 5200 engine's cartridge: a 512KB SuperCart (atari800
 cartridge type 74).
 
-Usage: build.py ROM OUTDIR [--autopilot | --script NAME] [--start MAP,X,Y] [--fight N] [--gold N] [--keys N] [--item N[,N...]] [--level N] [--exp N] [--equip N] [--flags N] [--hurt N] [--drain N] [--seed N] [--name-entry] [--fade] [--profile]
+Usage: build.py ROM OUTDIR [--autopilot | --script NAME] [--start MAP,X,Y] [--fight N] [--gold N] [--keys N] [--item N[,N...]] [--level N] [--exp N] [--equip N] [--flags N] [--hurt N] [--drain N] [--seed N] [--name-entry] [--fade] [--walk-beat] [--profile]
 
 Converts the game's data (convert.py), then assembles native/main.asm with
 it into the first half of every bank, and puts the data banks' second
@@ -412,6 +412,29 @@ def status_template():
     return [b for r in rows for b in r]
 
 
+def assemble(out, args):
+    """Run Ophis on OUT's main.asm: the ophis command if it is installed,
+    else Ophis's own Python in this process (as the web builder does, where
+    nothing can be run)."""
+    if shutil.which("ophis"):
+        run = subprocess.run(["ophis"] + args, cwd=out, capture_output=True, text=True)
+        if run.returncode:
+            sys.exit(f"build: ophis failed\n{run.stdout}{run.stderr}")
+        return
+    import contextlib
+    import io
+    import Ophis.Main
+    here, log = os.getcwd(), io.StringIO()
+    os.chdir(out)
+    try:
+        with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            failed = Ophis.Main.run_ophis(args)
+    finally:
+        os.chdir(here)
+    if failed:
+        sys.exit(f"build: ophis failed\n{log.getvalue()}")
+
+
 def main():
     args = sys.argv[1:]
     script = None
@@ -489,6 +512,7 @@ def main():
     # asks for it (--name-entry); other tests start with NAME.
     name_entry = "--name-entry" in args or not (autopilot or script)
     map_fade = "--fade" in args or not (autopilot or script)   # (Test builds: no fades, but ;FADE.)
+    walk_beat = "--walk-beat" in args or not (autopilot or script)   # (Test builds: steps at once, but ;WALK-BEAT.)
     if autopilot:
         fight = 0xFE                    # The measurement walks: no fights.
     args = [a for a in args if not a.startswith("--")]
@@ -532,6 +556,7 @@ def main():
         f.write(f".alias START_KEYS       {keys}\n")
         f.write(f".alias NAME_ENTRY       {int(name_entry)}\n")
         f.write(f".alias MAP_FADE         {int(map_fade)}\n")
+        f.write(f".alias WALK_BEAT        {int(walk_beat)}\n")
         inv = bytearray(4)                      # Two items a byte (the low nibble first).
         for k, v in enumerate(items):
             inv[k // 2] |= v << (4 * (k & 1))
@@ -570,10 +595,7 @@ def main():
                     os.path.join(out, "input.asm"))
 
     program = os.path.join(out, "program.bin")
-    run = subprocess.run(["ophis", "-q", "-o", program, "-m", os.path.join(out, "dwnative.bin.map"),
-                          "main.asm"], cwd=out, capture_output=True, text=True)
-    if run.returncode:
-        sys.exit(f"build: ophis failed\n{run.stdout}{run.stderr}")
+    assemble(out, ["-q", "-o", program, "-m", os.path.join(out, "dwnative.bin.map"), "main.asm"])
     code = open(program, "rb").read()
     if len(code) < HALF:
         sys.exit(f"build: the program is {len(code):#x} bytes, not {HALF:#x}")
