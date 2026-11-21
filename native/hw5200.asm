@@ -6,6 +6,8 @@
 .alias HPOSP1           $C001   ;
 .alias HPOSP2           $C002   ;
 .alias HPOSP3           $C003   ;
+.alias SIZEP0           $C008   ;Player 0-1 widths (0 normal, 3 quadruple).
+.alias SIZEP1           $C009   ;
 .alias TRIG0            $C010   ;Controller 1 lower fire button (read).
 .alias COLPM0           $C012   ;Player 0-3 colors.
 .alias COLPM1           $C013   ;

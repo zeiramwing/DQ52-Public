@@ -535,6 +535,16 @@ Guardians:      .byte HAUKSNESS_MAP, 18, 12, $21, 0
 ;After a step: on a guardian's block (and it not beaten), its fight. C
 ;set if it began.
 GuardianFight:
+        JSR GuardianHere        ;
+        BCC GuardNone           ;
+        LDA Guardians+3,X       ;
+        JSR StartBattle         ;
+        SEC                     ;
+GuardNone:
+        RTS                     ;
+;C set if the hero is on a guardian's block and it is not beaten; X its
+;entry's offset.
+GuardianHere:
         LDX #$00                ;
 GuardNext:
         LDA Guardians,X         ;
@@ -549,8 +559,6 @@ GuardNext:
         LDA Guardians+4,X       ;
         AND ModFlags            ;
         BNE GuardSkip           ;
-        LDA Guardians+3,X       ;
-        JSR StartBattle         ;
         SEC                     ;
         RTS                     ;
 GuardSkip:

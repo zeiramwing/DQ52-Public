@@ -18,7 +18,8 @@ map, the banks, the character sets) before touching code.
 - No model names or IDs in code, comments or commits.
 - Commit and push straight to `main` in zeiramwing/DQ52. Make no PRs
   unless asked. End commit messages with the session's Co-Authored-By /
-  Claude-Session lines.
+  Claude-Session lines here; the public repo's sync commits carry the
+  Co-Authored-By line only, no Claude-Session link (the owner's choice).
 - Don't tag a 1.0 until the owner has finished real-hardware testing.
 - Don't reorganise the banks unless a fix needs it.
 
@@ -39,7 +40,7 @@ map, the banks, the character sets) before touching code.
     python3 tools/native/test.py build/dragon_warrior.nes build/tests [NAME...]
     python3 tools/native/measure.py build/dragon_warrior.nes build/measure
 
-- `test.py` runs the controller scripts in `native/scripts` (91 of them)
+- `test.py` runs the controller scripts in `native/scripts` (95 of them)
   and checks each script's `;EXPECT` lines against the screen and memory.
   The whole suite must pass before you push a code change. Walking must
   stay at the NES's 16 frames a step (`measure.py`).
@@ -60,7 +61,7 @@ map, the banks, the character sets) before touching code.
 - The VBI writes what ANTIC reads from the frame's first line first
   (scroll, VDSLST, colors, SetAddresses), before line 16. Probe VCOUNT
   if you add work there: late writes glitch on real hardware only.
-- Free program space is tight (about 630 bytes). Check the build's report.
+- Free program space is tight (about 25 bytes). Check the build's report.
 - Edit `tools/native/convert.py` with care: confirm a whole edit applied,
   because half-applied edits have broken it before.
 

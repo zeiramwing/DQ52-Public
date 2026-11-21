@@ -657,6 +657,97 @@ PwNameCharNext:
         SEC                     ;
         RTS                     ;
 
+;--------------------------------------[The battle window's spiral]---------------------------------
+
+;As the game draws its battle window (CmbtBGPlcmntTbl: 49 blocks of 2x2
+;tiles, one a frame, from the middle outward), but with players 0 and 1 as
+;a black mask over the window, drawn under it whole: quadruple width, a bit
+;a character, so 16 characters (columns 10-25, the window's 10-23), and its
+;rows 6-17 as lines 64-159 (the view block-aligned, VSCROL 0, as a battle
+;begins at a step's end). SpiralSet before the screen shows the battle;
+;Spiral then takes a block off the mask a frame. (The game's rows past 12
+;are under our dialog window: skipped.)
+.alias SpiralOn         $07C5   ;Non-zero: players 0 and 1 black (SetHardware).
+.alias SpiralIdx        $07C7   ;The next block in SpiralTbl.
+.alias SPIRAL_TOP       64      ;Row 6's first line.
+.alias SPIRAL_END       160     ;Past row 17.
+SpiralSet:
+        LDA Enemy               ;(Not for the Dragonlord's second form: the
+        CMP #EN_DRAGONLORD2     ;game draws no window for him.)
+        BEQ SpiralOff           ;
+        LDX #SPIRAL_TOP         ;
+SpiralFill:
+        LDA #$FF                ;
+        STA Player0,X           ;
+        LDA #$FC                ;(Columns 24 and 25 not.)
+        STA Player1,X           ;
+        INX                     ;
+        CPX #SPIRAL_END         ;
+        BNE SpiralFill          ;
+        LDA #$03                ;
+        STA SIZEP0              ;
+        STA SIZEP1              ;
+        LDA #HERO_HPOS-24       ;Column 10: 6 left of the hero's 16, 4
+        STA HPOSP0              ;color clocks a column.
+        LDA #HERO_HPOS+8        ;Column 18.
+        STA HPOSP1              ;
+        LDA #$01                ;
+        STA SpiralOn            ;
+        RTS                     ;
+Spiral:
+        LDA SpiralOn            ;
+        BEQ SpiralOff           ;
+        LDA #$00                ;
+        STA SpiralIdx           ;
+SpiralBlock:
+        LDX SpiralIdx           ;
+        LDA SpiralTbl,X         ;Its row (low nibble: tiles, even), past
+        AND #$0F                ;ours: none.
+        CMP #SCENE_SHOWN        ;
+        BCS SpiralNext          ;
+        ASL                     ;Its first line: 64 + 8 * the row, a
+        ASL                     ;multiple of 16.
+        ASL                     ;
+        ADC #SPIRAL_TOP         ;
+        TAY                     ;
+        LDA SpiralTbl,X         ;Its column (high nibble, tiles, even).
+        LSR                     ;
+        LSR                     ;
+        LSR                     ;
+        LSR                     ;
+        TAX                     ;
+SpiralLine:
+        LDA Player0,Y           ;Its two bits off, its 16 lines.
+        AND SpiralMask0,X       ;
+        STA Player0,Y           ;
+        LDA Player1,Y           ;
+        AND SpiralMask1,X       ;
+        STA Player1,Y           ;
+        INY                     ;
+        TYA                     ;
+        AND #$0F                ;
+        BNE SpiralLine          ;
+        JSR WaitFrame           ;A block a frame.
+SpiralNext:
+        INC SpiralIdx           ;
+        LDA SpiralIdx           ;
+        CMP #49                 ;
+        BNE SpiralBlock         ;
+        LDA #$00                ;The players the hero's again (out of sight
+        STA SpiralOn            ;in a battle), redrawn when he is back.
+        STA SIZEP0              ;
+        STA SIZEP1              ;
+        STA HPOSP0              ;
+        STA HPOSP1              ;
+        LDA #$FF                ;
+        STA Shown               ;
+SpiralOff:
+        RTS                     ;
+.include "spiral.asm"            ;SpiralTbl: the game's order (CmbtBGPlcmntTbl, build.py's).
+;By the block's column (0-12, even): the bits to keep in each player.
+SpiralMask0:    .byte $3F, 0, $CF, 0, $F3, 0, $FC, 0, $FF, 0, $FF, 0, $FF
+SpiralMask1:    .byte $FF, 0, $FF, 0, $FF, 0, $FF, 0, $3F, 0, $CF, 0, $F3
+
 ;--------------------------------------[The end credits]---------------------------------------------
 
 .alias CrPtr            $07B5   ;2: the credits' next byte (build.py's

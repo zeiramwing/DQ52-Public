@@ -154,7 +154,7 @@ the game and as touches of its own:
 | **Colour registers changed on the fly** | Fades between maps, at the inn, and for the credits. Monsters fade in and out in dark places. Screen flashes: a hurtful step (red), the rainbow drop and the MP wizard (grey), the spells and hits as the NES times them. Pause dims the screen. |
 | **Character sets in RAM** | Townspeople stepping in place, the overworld's swaying sea, the blinking cursor, a monster building up row by row on the overworld. |
 | **Fine scrolling** | The view scrolls a line or a colour clock at a time; hits shake the screen as on the NES. |
-| **Players** | The hero's three colours (two players overlapping make the third). The title's dragon, in front of its banner. |
+| **Players** | The hero's three colours (two players overlapping make the third). The title's dragon, in front of its banner. The battle window's spiral, as the NES draws it: two players at quadruple width, a bit a character, mask the window in black and are taken away block by block. |
 | **POKEY's 16-bit channels, clocks and noise** | Exact pitch for the lead voice, with a vibrato on its long notes; the other two switch clocks per frame to stay in tune. Crackling dragon fire; buzzing hits and force fields. The music is mixed a little softer and dips under the effects. |
 | **Attract mode** | After about 9 minutes untouched, the screen shifts hue and dims, as 5200 games do, until something is pressed. |
 | **SuperCart banking** (512KB) | The program is in every bank and the data in the switched half. Code that rarely runs (title, passwords, credits, story events) runs from a data bank. |
@@ -183,7 +183,7 @@ vibrato, and some effects have POKEY's own noise textures.
     python3 tools/native/test.py path/to/Dragon_Warrior.nes build/tests [NAME...]
     python3 tools/native/measure.py path/to/Dragon_Warrior.nes build/measure
 
-`test.py` runs the controller scripts in `native/scripts` (90 of them) in
+`test.py` runs the controller scripts in `native/scripts` (95 of them) in
 atari800, and checks each script's `;EXPECT` lines against the screen and
 memory. `measure.py` walks a fixed route and checks every step takes the
 NES's 16 frames.

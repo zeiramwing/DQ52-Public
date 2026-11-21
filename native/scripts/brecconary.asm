@@ -4,6 +4,7 @@
 ;TALK.
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
+;FIGHT: 254
 ;EXPECT-MSG: 89
 ;EXPECT: HP  15
 ;EXPECT-BYTE: Song 4

@@ -38,6 +38,20 @@ PwShowP:
         JSR SelectMsg           ;
         JMP PwShowStep          ;
 
+;Call routine X/Y in MSG_BANK (poweron.asm) from the program, the bank in
+;before put back after. (FarPtr: FarOut's, not in use meanwhile.)
+MsgCall:
+        STX FarPtr              ;
+        STY FarPtr+1            ;
+        LDA CurBank             ;
+        PHA                     ;
+        JSR SelectMsg           ;
+        JSR MsgJump             ;
+        PLA                     ;
+        JMP SelectBank          ;
+MsgJump:
+        JMP (FarPtr)            ;
+
 ;--------------------------------------[At power-on]-------------------------------------------------
 
 ;The power-on code (poweron.asm) is in MSG_BANK: PowerOn runs its frame,

@@ -5,7 +5,7 @@
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
 ;FIGHT: 0
-;SEED: 48879
+;SEED: 777
 ;EXPECT: 2.
 
 Script:

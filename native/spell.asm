@@ -396,6 +396,29 @@ SpellFails:
         CMP Tmp                 ;
         RTS                     ;
 
+;The enemy runs from a strong hero (CheckEnRun: strength, not attack, at
+;least twice its attack; then 1 in 4): gone, and the calling step ends
+;with it (its return taken off the stack).
+EnFlees:
+        LDA Strength            ;
+        LSR                     ;
+        CMP EnemyAtt            ;
+        BCC EnFleesNot          ;
+        JSR NextRandom          ;
+        LDA Random+1            ;
+        AND #$03                ;
+        BNE EnFleesNot          ;
+        PLA                     ;
+        PLA                     ;
+        JSR EraseMonster        ;
+        LDA #SFX_RUN            ;
+        JSR PlaySFX             ;
+        LDA #$E3                ;The enemy runs away.
+        LDX #B_GONE             ;
+        JMP Say                 ;
+EnFleesNot:
+        RTS                     ;
+
 ;The enemy's turn (StartEnemyTurn): asleep, it wakes 1 time in 3.
 StepEnemy:
         LDA EnSleep             ;
@@ -416,26 +439,13 @@ StepEnAsleep:
         LDX #B_ROUND            ;
         JMP Say                 ;
 
-;It may run from a strong hero (strength at least twice its attack: 1 in
-;4); else its spells (EnSpells: bits 4-5 how often one of the upper ones,
+;It may run from a strong hero (EnFlees); else its spells (EnSpells: bits 4-5 how often one of the upper ones,
 ;6-7 which: SLEEP, STOPSPELL, HEAL, HEALMORE, the last two only below a
 ;quarter of its HP; bits 0-1 how often a lower one, 2-3 which: HURT,
 ;HURTMORE, fire, the great fire); else it attacks.
 StepEnAct:
-        JSR GetAttack           ;
-        LSR                     ;
-        LDX Enemy               ;
-        CMP EnemyAtt               ;
-        BCC +                   ;
+        JSR EnFlees             ;
         JSR NextRandom          ;
-        LDA Random+1            ;
-        AND #$03                ;
-        BNE +                   ;
-        JSR EraseMonster        ;
-        LDA #$E3                ;The enemy runs away.
-        LDX #B_GONE             ;
-        JMP Say                 ;
-*       JSR NextRandom          ;
         LDX Enemy               ;
         LDA EnemySpells            ;
         AND #$30                ;

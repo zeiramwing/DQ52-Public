@@ -4,6 +4,7 @@
 ;moving and drawn.
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
+;FIGHT: 254
 ;EXPECT-ZERO: Missed
 
 Script:

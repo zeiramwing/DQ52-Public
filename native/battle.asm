@@ -116,6 +116,9 @@
 .alias B_MP             15      ;
 .alias B_CLOSE          16      ;All said: a button ends the battle.
 .alias B_RUN            17      ;The run message is out.
+.alias EN_DROLLMAGI     $14     ;Enemies from which running is harder (TryRun).
+.alias EN_GDRAGON       $1E     ;
+.alias EN_STONEMAN      $23     ;
 .alias B_GONE           18      ;The enemy ran away, or the hero did.
 .alias B_DEAD           19      ;
 .alias B_DEAD2          20      ;The death message is out: a button.
@@ -136,52 +139,63 @@
 
 ;After a step: on the overworld, maybe a fight.
 CheckEncounter:
-        LDX MapId               ;
-        BEQ +                   ;
-        LDA MapEnemies          ;A cave: its own row of enemies, 1 in 16
-        CMP #$FF                ;(as on brick).
-        BNE CaveEncounter       ;
-        RTS                     ;
-*       LDA #FIGHT_ENEMY        ;(Test builds: always this enemy, or never,
+        LDA ModFlags            ;The Dragonlord dead: no more fights (the
+        AND #F_DL_DEAD          ;game's ChkOtherBlocks).
+        BNE EncounterNone       ;
+        LDX MapId               ;Off the overworld, only on a map with its
+        BEQ EncounterTest       ;own row of enemies.
+        LDA MapEnemies          ;
+        CMP #$FF                ;
+        BEQ EncounterNone       ;
+EncounterTest:
+        LDA #FIGHT_ENEMY        ;(Test builds: always this enemy, or never,
         CMP #$FE                ;$FE.)
-        BNE +                   ;
-        RTS                     ;
-*       CMP #$FF                ;
-        BEQ +                   ;
+        BEQ EncounterNone       ;
+        CMP #$FF                ;
+        BEQ EncounterGround     ;
         JMP StartBattle         ;
-*       LDA HeroX               ;The ground under the hero.
-        STA BX                  ;
-        LDA HeroY               ;
-        STA BY                  ;
-        JSR GetBlock            ;
+EncounterNone:
+        RTS                     ;
+EncounterGround:
+        LDA HeroX               ;The ground under the hero, on any map, as
+        STA BX                  ;the game's: sand and hills 1 in 8; trees,
+        LDA HeroY               ;brick, swamp and the barrier 1 in 16;
+        STA BY                  ;elsewhere 1 in 32 where X and Y are both
+        JSR GetBlock            ;even or both odd, else 1 in 16.
         STA Tmp3                ;
-        LDX #$07                ;Sand and hills: 1 in 8.
+        LDX #$07                ;
         CMP #$01                ;
-        BEQ CheckEncounterNext  ;
+        BEQ EncounterRoll       ;
         CMP #$02                ;
-        BEQ CheckEncounterNext  ;
-        LDX #$0F                ;Forest, brick, swamp: 1 in 16.
+        BEQ EncounterRoll       ;
+        LDX #$0F                ;
         CMP #$0B                ;
-        BEQ CheckEncounterNext  ;
+        BEQ EncounterRoll       ;
         CMP #$04                ;
-        BEQ CheckEncounterNext  ;
+        BEQ EncounterRoll       ;
         CMP #$06                ;
-        BEQ CheckEncounterNext  ;
-        LDA HeroX               ;Elsewhere: 1 in 32 where X and Y are both
-        EOR HeroY               ;even or both odd, else 1 in 16.
+        BEQ EncounterRoll       ;
+        CMP #BLK_FFIELD         ;
+        BEQ EncounterRoll       ;
+        LDA HeroX               ;
+        EOR HeroY               ;
         LSR                     ;
-        BCS CheckEncounterNext  ;
+        BCS EncounterRoll       ;
         LDX #$1F                ;
-*       NOP                     ;
-CheckEncounterNext:
-*       STX Tmp                 ;
+EncounterRoll:
+        STX Tmp                 ;
         JSR NextRandom          ;
         LDA Random+1            ;
         AND Tmp                 ;
-        BEQ +                   ;
-        RTS                     ;
-*       LDA #MSG_BANK           ;(The zones and groups are in MSG_BANK.)
+        BNE EncounterNone       ;
+        LDA #MSG_BANK           ;(The zones and groups are in MSG_BANK.)
         JSR SelectBank          ;
+        LDA MapId               ;Off the overworld: the map's row.
+        BEQ EncounterZone       ;
+        LDA MapEnemies          ;
+        STA Tmp                 ;
+        JMP EncounterRow        ;
+EncounterZone:
         LDA HeroY               ;The zone: X / 15, Y / 15.
         JSR Div15               ;
         ASL                     ;
@@ -198,79 +212,46 @@ CheckEncounterNext:
         STA Tmp                 ;
         PLA                     ;Even X: the upper nibble.
         LSR                     ;
-        BCS +                   ;
+        BCS EncounterNibble     ;
         LSR Tmp                 ;
         LSR Tmp                 ;
         LSR Tmp                 ;
         LSR Tmp                 ;
-*       LDA Tmp                 ;
+EncounterNibble:
+        LDA Tmp                 ;
         AND #$0F                ;
         STA Tmp                 ;
-        BNE CheckEncounterNext2 ;
-        JSR NextRandom          ;Zone 0: maybe not.
-        LDX #$01                ;
+        BNE EncounterRow        ;
+        JSR NextRandom          ;Zone 0: maybe not (1 in 2, on a hill 1 in
+        LDX #$01                ;4).
         LDA Tmp3                ;
         CMP #$02                ;
-        BNE +                   ;
+        BNE EncounterZero       ;
         LDX #$03                ;
-*       TXA                     ;
+EncounterZero:
+        TXA                     ;
         AND Random+1            ;
-        BEQ +                   ;
-        RTS                     ;
-CheckEncounterNext2:
-*       LDA Tmp                 ;One of the zone's 5.
+        BNE EncounterNone       ;
+EncounterRow:
+        LDA Tmp                 ;One of the row's 5.
         ASL                     ;
         ASL                     ;
         CLC                     ;
         ADC Tmp                 ;
         STA Tmp                 ;
-*       JSR NextRandom          ;
+EncounterPick:
+        JSR NextRandom          ;
         LDA Random+1            ;
         AND #$07                ;
         CMP #$05                ;
-        BCS -                   ;
+        BCS EncounterPick       ;
         CLC                     ;
         ADC Tmp                 ;
         TAX                     ;
         LDA EnGroups,X          ;
-        JSR Repelled            ;
-        BCC +                   ;
-        RTS                     ;
-*       JMP StartBattle         ;
-CaveEncounter:
-        STA Tmp                 ;Its row * 5.
-        ASL                     ;
-        ASL                     ;
-        CLC                     ;
-        ADC Tmp                 ;
-        STA Tmp                 ;
-        LDA #FIGHT_ENEMY        ;(Test builds: this enemy, or none.)
-        CMP #$FE                ;
-        BNE +                   ;
-        RTS                     ;
-*       CMP #$FF                ;
-        BEQ +                   ;
+        JSR Repelled            ;(Only on the overworld.)
+        BCS EncounterNone       ;
         JMP StartBattle         ;
-*       JSR NextRandom          ;
-        LDA Random+1            ;
-        AND #$0F                ;
-        BEQ CaveEnemy           ;
-        RTS                     ;
-CaveEnemy:
-        JSR SelectMsg           ;(EnGroups's bank.)
-        JSR NextRandom          ;One of the row's 5.
-        LDA Random+1            ;
-        AND #$07                ;
-        CMP #$05                ;
-        BCS CaveEnemy           ;
-        CLC                     ;
-        ADC Tmp                 ;
-        TAX                     ;
-        LDA EnGroups,X          ;
-        JSR Repelled            ;
-        BCC +                   ;
-        RTS                     ;
-*       JMP StartBattle         ;
 
 ;The name's part in the stats (LoadStats): its first 4 letters' sum; its
 ;bit 0 cuts the max MP (if any) to 9/10, else the strength; bit 1 the max
@@ -432,12 +413,27 @@ BattleArrowL:                   ;
         JSR FreezeView          ;The map's screen held (Frozen) while the
         JSR MonsterComes        ;scene is drawn into the ring under it, then
         JSR ComposeScene        ;the VBI shows it, with the battle's
-        LDA #$01                ;interrupts, all in one frame (StartPending):
-        STA StartPending        ;no race with the beam, and no rows shown
-        LDA FrameCount          ;half drawn or in the wrong set.
-StartWait:
-        CMP FrameCount          ;
-        BEQ StartWait           ;
+        LDA WipeLeft            ;interrupts, all in one frame (StartPending):
+        PHA                     ;no race with the beam, and no rows shown
+        LDA MonFadeTo           ;half drawn or in the wrong set. Shown under
+        PHA                     ;a black mask the game's spiral takes away
+        LDA #$00                ;(Spiral, in MSG_BANK), the monster held
+        STA WipeLeft            ;back until it is done.
+        LDA MonFade             ;
+        STA MonFadeTo           ;
+        LDX #<SpiralSet         ;
+        LDY #>SpiralSet         ;
+        JSR MsgCall             ;
+        LDA #$01                ;
+        STA StartPending        ;
+        JSR WaitFrame           ;
+        LDX #<Spiral            ;
+        LDY #>Spiral            ;
+        JSR MsgCall             ;
+        PLA                     ;
+        STA MonFadeTo           ;
+        PLA                     ;
+        STA WipeLeft            ;
         LDA #$00                ;
         STA StatusOn            ;
         JSR ShowStatus          ;
@@ -1149,14 +1145,36 @@ StepHi: .byte >StepIntro, >StepPrompt, >StepNone, >StepAttack, >StepDamage, >Ste
 StepNone:
         RTS                     ;
 
+;Running (TryRun): as who goes first, but the stronger enemies' defense
+;is multiplied by a wider random number: 0-255 from the stoneman on, 0-127
+;from the green dragon, 0-94 (two added) from the drollmagi.
+TryRun:
+        JSR NextRandom          ;
+        LDA Random+1            ;
+        LDX Enemy               ;
+        CPX #EN_STONEMAN        ;
+        BCS RunOdds             ;
+        AND #$7F                ;
+        CPX #EN_GDRAGON         ;
+        BCS RunOdds             ;
+        CPX #EN_DROLLMAGI       ;
+        BCC HeroFirst           ;
+        AND #$3F                ;
+        STA Tmp                 ;
+        JSR NextRandom          ;
+        LDA Random+1            ;
+        AND #$1F                ;
+        CLC                     ;
+        ADC Tmp                 ;
+        BCC RunOdds             ;(Always.)
 ;Who goes first (CalcWhoIsNext): the hero's agility times a random byte
 ;against the enemy's defense times a random 0-63; C set if the hero wins.
 HeroFirst:
         JSR NextRandom          ;
         LDA Random+1            ;
         AND #$3F                ;
-        LDX Enemy               ;
-        LDY EnemyDef               ;
+RunOdds:
+        LDY EnemyDef            ;
         STY MulB                ;
         JSR Mul8                ;
         LDA ProdLo              ;
@@ -1176,6 +1194,7 @@ HeroFirst:
         RTS                     ;
 
 StepIntro:
+        JSR EnFlees             ;(It may run at once.)
         JSR HeroFirst           ;
         BCS StepRound           ;
         LDA #$E4                ;The enemy goes first: said.
@@ -1292,12 +1311,13 @@ StepAttack:
         LDA #$E7                ;The hero misses: said.
         LDX #B_ENEMY            ;
         JMP Say                 ;
-*       JSR NextRandom          ;
+*       LDA EnSleep             ;Asleep, it cannot dodge.
+        BNE StepDamage          ;
+        JSR NextRandom          ;
         LDA Random+1            ;
         AND #$3F                ;
         STA Tmp                 ;
-        LDX Enemy               ;
-        LDA EnemyMDef              ;
+        LDA EnemyMDef           ;
         AND #$0F                ;
         BEQ StepDamage          ;
         SEC                     ;
@@ -1423,34 +1443,49 @@ StepWin:
         LDX #B_EXP              ;
         JMP Say                 ;
 StepExp:
-        LDX Enemy               ;
-        LDA EnemyExp               ;
+        LDA EnemyExp            ;
         STA Amount              ;
         LDA #$00                ;
         STA Amount+1            ;
-        LDA EnemyExp               ;
+        LDA EnemyExp            ;
         CLC                     ;
         ADC Experience          ;
         STA Experience          ;
-        BCC +                   ;
+        BCC StepExpShow         ;
         INC Experience+1        ;
-*       JSR RedrawStatus        ;
+        BNE StepExpShow         ;
+        LDA #$FF                ;No more than 65535.
+        STA Experience          ;
+        STA Experience+1        ;
+StepExpShow:
+        JSR RedrawStatus        ;
         LDA #$EF                ;The experience gained.
         LDX #B_GOLD             ;
         JMP Say                 ;
+;The gold: its base times 192-255, / 256 (CalcPlyrGold).
 StepGold:
-        LDX Enemy               ;
-        LDA EnemyGold              ;
+        JSR NextRandom          ;
+        LDA EnemyGold           ;
+        STA MulB                ;
+        LDA Random+1            ;
+        ORA #$C0                ;
+        JSR Mul8                ;
+        LDA ProdHi              ;
         STA Amount              ;
         LDA #$00                ;
         STA Amount+1            ;
-        LDA EnemyGold              ;
+        LDA Amount              ;
         CLC                     ;
         ADC Gold                ;
         STA Gold                ;
-        BCC +                   ;
+        BCC StepGoldShow        ;
         INC Gold+1              ;
-*       JSR RedrawStatus        ;
+        BNE StepGoldShow        ;
+        LDA #$FF                ;No more than 65535.
+        STA Gold                ;
+        STA Gold+1              ;
+StepGoldShow:
+        JSR RedrawStatus        ;
         LDA #$F0                ;The gold gained.
         LDX #B_LEVEL            ;
         JMP Say                 ;
@@ -1565,8 +1600,11 @@ StepClose:
 StepGone:
         JMP EndBattle           ;
 
-;RUN: the run message; then as who goes first decides (weaker
-;enemies: TryRun).
+;RUN: the run message; then away if the enemy sleeps, else as TryRun
+;decides. Away from a guardian not beaten (the axe knight on Erdrick's
+;armor, the green dragon before the princess, the golem before Cantlin),
+;the hero is put a block back, as the game does, so he cannot search or
+;slip past.
 DoRun:
         LDA #SFX_RUN            ;
         JSR PlaySFX             ;
@@ -1574,12 +1612,29 @@ DoRun:
         LDX #B_RUN              ;
         JMP Say                 ;
 StepRun:
-        JSR HeroFirst           ;
-        BCC +                   ;
-        JMP EndBattle           ;
-*       LDA #$F6                ;The escape failed.
+        LDA EnSleep             ;
+        BNE RunAway             ;
+        JSR TryRun              ;
+        BCS RunAway             ;
+        LDA #$F6                ;The escape failed.
         LDX #B_ENEMY            ;
         JMP Say                 ;
+RunAway:
+        JSR EndBattle           ;
+        JSR GuardianHere        ;
+        BCC RunAwayDone         ;
+        TXA                     ;(The axe knight's first: a block left;
+        BNE RunAwayUp           ;the others, up.)
+        DEC HeroX               ;
+        BCS RunAwayMove         ;(C set: always.)
+RunAwayUp:
+        DEC HeroY               ;
+RunAwayMove:
+        JSR StairsSound         ;
+        LDA MapId               ;
+        JMP LoadMap             ;
+RunAwayDone:
+        RTS                     ;
 
 ;The status window drawn again (its numbers changed).
 RedrawStatus:
@@ -1648,11 +1703,19 @@ FreezeRow:
         RTS                     ;
 
 ;Dead: back to the King with half the gold, HP and MP full (as the game's
-;InitDeathSequence), and what he says to a hero he brings back.
+;InitDeathSequence), and what he says to a hero he brings back; cursed,
+;outside the castle with 1 HP.
 HeroDies:
         JSR EndBattle           ;
         LSR Gold+1              ;
         ROR Gold                ;
+        LDA Flags2              ;Cursed: outside Tantegel instead, with 1 HP
+        AND #F2_CURSED          ;and the MP as they were (StartAtThroneRoom).
+        BEQ HeroDiesFull        ;
+        LDA #$01                ;
+        STA HitPoints           ;
+        JMP CursedDeath         ;
+HeroDiesFull:
         LDA MaxHP               ;
         STA HitPoints           ;
         LDA MaxMP               ;
@@ -1663,11 +1726,7 @@ HeroDies:
         STA HeroY               ;
         LDA #$00                ;Facing up, to the King.
         STA Facing              ;
-        LDA Flags2              ;Cursed: outside Tantegel instead.
-        AND #F2_CURSED          ;
-        BEQ +                   ;
-        JMP CursedDeath         ;
-*       LDA #THRONE_MAP         ;
+        LDA #THRONE_MAP         ;
         JSR LoadMap             ;
         LDA #<DeathTalk         ;
         STA MsgList             ;

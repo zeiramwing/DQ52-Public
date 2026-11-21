@@ -1078,3 +1078,98 @@ on the beat anyway, and a frame run long must not cost a whole beat).
 Play builds only (WALK_BEAT): test builds step at once, as their scripts'
 short presses expect, but with `;WALK-BEAT`. Test: `walkbeat`.
 
+## The battle window's spiral
+
+The game draws its battle window in a spiral, a 16-pixel block a frame
+from the middle outward (CmbtBGPlcmntTbl, 49 blocks), the monster after.
+The port showed the window whole. *Now:* the window is still drawn whole
+under the held screen and shown in one frame, but under a mask: players 0
+and 1 at quadruple width (a bit a character: 16 characters, columns
+10-25), black (SpiralOn: SetHardware), over the window's rows (lines
+64-159, the view block-aligned at a battle's start). Spiral (MSG_BANK,
+called through MsgCall) takes a block off the mask a frame in the game's
+order (its rows past 12, under our dialog window, skipped), then gives
+the players back to the hero; the monster's wipe or fade waits for it.
+Not for the Dragonlord's second form, as in the game. The one difference:
+the window is black where the game still shows the map, until each block
+comes.
+
+## An audit against the disassembly: encounters, the random numbers, hills
+
+Every table the battles and encounters read is the ROM's, from the
+disassembly's addresses (checked: EnStatTbl, BaseStatsTbl, LevelUpTbl,
+EnemyGroupsTbl, OvrWrldEnGrid, CaveEnIndexTbl, RepelTbl), and the maps with
+encounters and their rows of enemies are the game's (CaveEnIndexTbl for
+the dungeons, ChkDungeonFights's rows for the castle's two lit floors and
+Hauksness; none in Erdrick's cave). The name's part in the stats is the
+game's (LoadStats). Found and fixed:
+
+- The random numbers: NextRandom was a 16-bit shift register, whose
+  numbers one after another share most of their bits. After an
+  encounter's roll (4 bits all 0) the enemy's pick read 3 of the same
+  bits shifted: outside the zone around Tantegel only 2 of each zone's 5
+  enemies were ever fought (simulated: slots 0 and 4, 46% and 54%), and
+  every luck roll in the battles was as tangled. *Now:* the game's own
+  (UpdateRandNum: the number * 3, the high byte plus the low, $81 more),
+  checked against it for all 65536 numbers, still advanced each frame as
+  the game advances it with each read of the controller.
+- Encounters off the overworld: a flat 1 in 16. *Now:* the ground's odds
+  on every map with enemies, as the game's (sand 1 in 8 and grass 1 in 16
+  or 1 in 32 in Hauksness and on the castle's bottom floor; the caves'
+  brick 1 in 16 as before), and the barrier 1 in 16.
+- After the Dragonlord's death the game has no random fights at all
+  (ChkOtherBlocks); there were. Test: `dlpeace` (fails before, passes
+  now).
+- Hills: the game pauses 3 frames after a step onto a hill, and so misses
+  its 16-frame beat: a hill step takes two beats. *Now:* the same
+  (HillWait), in play builds, as the walking beat (WALK_BEAT).
+
+
+## The audit, part two: the battle's rules
+
+The rest of the battle checked against the disassembly. The same as the
+game's already: the hit and damage sums, who goes first, the enemy's
+spells and how often (HURT 3-10, HURTMORE 30-45, both 2/3 in Erdrick's or
+magic armor; fire 16-23 and 65-72, 2/3 in Erdrick's; its HEAL 20-27 and
+HEALMORE 85-100; STOPSPELL half the time, never through Erdrick's armor),
+sleep and waking, the hero's HEAL 10-17 and HEALMORE 85-100, an herb's
+23-30, half the gold lost at death. Found and fixed:
+
+- An enemy ran from a strong hero only on its own turns, and judged him
+  by his attack (strength and weapon). *Now:* as the game's CheckEnRun:
+  his strength alone, at least twice its attack, then 1 in 4, also as the
+  fight starts, before who goes first is decided (with the run's sound).
+  Test: `enflee` (fails before, passes now); `hauksfight`,
+  `battlehurt`, `battlelist` and `lordfloor`, whose strong heroes now may see the Slime run, are seeded.
+- RUN was decided as who goes first. *Now:* the game's TryRun: away at
+  once from a sleeping enemy; otherwise the enemy's defense is multiplied
+  by a random number the wider the stronger the enemy (0-63, then 0-94
+  from the drollmagi, 0-127 from the green dragon, 0-255 from the
+  stoneman).
+- Running from a guardian not beaten (the axe knight on Erdrick's armor,
+  the green dragon before the princess, the golem before Cantlin) left
+  the hero on its block: he could search for the armor, or walk on, with
+  it never beaten. *Now:* a block back (left from the knight, up from the
+  others), the map loaded again with the stairs' sound, as the game does.
+  Test: `runguard` (fails before, passes now).
+- A sleeping enemy could dodge. *Now:* it can't.
+- The gold was the enemy's base gold. *Now:* that times 192-255, / 256
+  (CalcPlyrGold). `fight`'s Slime now gives 1, not 2.
+- Experience and gold wrapped past 65535. *Now:* they stop there.
+
+## The audit, part three: equipment and curses
+
+The same as the game's: the weapons', armor's and shields' bonuses and
+prices (the ROM's tables), attack (strength and weapon) and defense
+(agility / 2, armor, shield, 2 more with the dragon's scale), Erdrick's
+armor's 1 HP a step and the magic armor's 1 every 4th, Erdrick's armor
+against swamps and barriers, the fighter's ring (worn, it does nothing
+else), the cursed hall row, and a cursed hero starting from a password
+with 1 HP. Found and fixed:
+
+- A cursed hero who died woke outside the castle with HP and MP full.
+  *Now:* 1 HP, the MP as they were, as the game's StartAtThroneRoom.
+  Test: `cursedeath` (fails before, passes now).
+- The spiral's block order was written into poweron.asm from the
+  disassembly. *Now:* build.py reads it from the ROM (CmbtBGPlcmntTbl),
+  as every other table; the cartridge is byte for byte the same.

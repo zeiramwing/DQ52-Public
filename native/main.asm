@@ -202,6 +202,7 @@
 .alias Mode             $AA     ;0 walking, 1 command window, 2 dialog, 3 battle,
                                 ;4 a shop, an inn or ITEM (shop.asm), 5 STATUS, 6 a password.
 .alias StandTime        $AB     ;Frames standing, to $FF.
+.alias HillWait         $0780   ;Frames before a step after one onto a hill.
 .alias StatusOn         $AC     ;Non-zero: the status window is shown.
 .alias DialogOn         $AD     ;Non-zero: the dialog window is shown.
 .alias WinRow           $AE     ;Screen row and column for PutChar.
@@ -414,6 +415,12 @@ Walk:
 *       LDA Stick               ;
         BEQ Stand               ;
         JSR HideStatus          ;
+        LDA HillWait            ;After a step onto a hill, a beat lost (the
+        BEQ WalkNoHill          ;game's 3 frames there miss its 16-frame
+        DEC HillWait            ;beat): turning only meanwhile.
+        JSR SetFacing           ;
+        JMP Frame               ;
+WalkNoHill:
         LDA #WALK_BEAT          ;From standing, as the game does (DoJoyUp
         BEQ WalkGo              ;and the rest): the hero turns at once, and
         LDA StandTime           ;steps only on its 16-frame beat (FrameCount
@@ -443,6 +450,18 @@ Step:
         BEQ Frame               ;
         LDA #$00                ;
         STA StepDone            ;
+        LDA #WALK_BEAT          ;(Onto a hill: the next step a beat later;
+        BEQ StepNoHill          ;play builds, as WALK_BEAT.)
+        LDA HeroX               ;
+        STA BX                  ;
+        LDA HeroY               ;
+        STA BY                  ;
+        JSR GetBlock            ;
+        CMP #$02                ;(The game's BLK_HILL.)
+        BNE StepNoHill          ;
+        LDA #16                 ;
+        STA HillWait            ;
+StepNoHill:
         JSR StepTimers          ;(A message up: no more this step.)
         BCS StepNext            ;
         JSR CheckDoor           ;
@@ -459,6 +478,8 @@ Step:
 StepNext:
 *       JMP Frame               ;
 Stand:
+        LDA #$00                ;(Standing: a step from here waits for the
+        STA HillWait            ;beat anyway.)
         LDA StandTime           ;The status window, once the hero has
         CMP #$FF                ;stood half a second.
         BEQ Frame               ;
@@ -478,13 +499,29 @@ Frame:
 
 ;A new random number (a 16-bit Galois LFSR).
 NextRandom:
-        LSR Random+1            ;
-        ROR Random              ;
-        BCC +                   ;
-        LDA Random+1            ;
-        EOR #$B4                ;
+        LDA Random+1            ;The game's (UpdateRandNum): the number
+        PHA                     ;* 3, its high byte plus its low, then
+        LDA Random              ;$81 more. (A shift register's numbers came
+        PHA                     ;out too alike one after another: the
+        ASL Random              ;enemy picked after an encounter's roll was
+        ROL Random+1            ;but 2 of a zone's 5.)
+        PLA                     ;
+        CLC                     ;
+        ADC Random              ;
+        STA Random              ;
+        PLA                     ;
+        ADC Random+1            ;
+        CLC                     ;
+        ADC Random              ;
         STA Random+1            ;
-*       RTS                     ;
+        LDA Random              ;
+        CLC                     ;
+        ADC #$81                ;
+        STA Random              ;
+        BCC NextRandomDone      ;
+        INC Random+1            ;
+NextRandomDone:
+        RTS                     ;
 
 ;--------------------------------------[Maps]--------------------------------------------------------
 
@@ -1954,8 +1991,11 @@ SetColored:
         JSR FadeLum             ;
         STA DlgInk              ;
         LDA TitleOn             ;(The title: its sprites, players 0 and 1,
-        CMP #$01                ;black.)
-        BNE TitleNotUp          ;
+        CMP #$01                ;black; and the battle window's spiral's
+        BEQ PlayersBlack        ;mask.)
+        LDA SpiralOn            ;
+        BEQ TitleNotUp          ;
+PlayersBlack:
         LDA #$00                ;
         STA COLPM0              ;
         STA COLPM1              ;

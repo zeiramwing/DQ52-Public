@@ -2,11 +2,14 @@
 ;every step starts a fight with a Slime: a step right, the fight (on black,
 ;the Dragonlord out of sight), FIGHT until it is won: the floor lit again,
 ;the Dragonlord back.
+;(Seeded: the hero is strong enough that the Slime may run, the
+;game's CheckEnRun; with this seed it stays.)
 ;Entries: frames, directions (1 up, 2 right, 4 down, 8 left), buttons
 ;(1 lower fire, 2 upper).
 ;START: 21,17,24
 ;LEVEL: 20
 ;FIGHT: 0
+;SEED: 1
 ;EXPECT-BYTE: BattleOn 0
 ;EXPECT-BYTE: Dark 0
 ;EXPECT-BYTE: LightW 1

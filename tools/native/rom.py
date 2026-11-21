@@ -90,6 +90,7 @@ AT = {
     # Bank 2: the text.
     "TextBlock1": (2, 0x8028),          # 19 blocks, one after another.
     # Bank 3: levels, enemy zones, the map blocks.
+    "CmbtBGPlcmntTbl": (3, 0xF397),     # The battle window's blocks in order: 49 bytes.
     "LevelUpTbl": (3, 0xF35B),          # The experience for each level: words.
     "OvrWrldEnGrid": (3, 0xF522),       # Enemy zones: 8 by 8 nibbles.
     "RepelTbl": (3, 0xF4FA),            # Each enemy's repel value.
